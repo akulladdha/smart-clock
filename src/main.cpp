@@ -28,12 +28,15 @@ int ringtone    = 0;   // 0 = Nokia, 1 = Beeps
 int SNOOZE_MINS = 5;
 
 // --- Clock state ---
-int currentHour = 0, currentMinute = 0, currentSecond = 0;
+volatile int currentHour = 0, currentMinute = 0, currentSecond = 0;
 
 // --- Alarm state ---
-bool alarmActive = false;
-bool snoozed     = false;
+volatile bool alarmActive = false;
+volatile bool snoozed     = false;
 int  snoozeHour, snoozeMinute;
+
+// --- FreeRTOS mutex ---
+SemaphoreHandle_t stateMutex;
 
 // --- Notes ---
 #define NOTE_E5  659
@@ -68,9 +71,9 @@ void playBeep(int freq, int durationMs) {
   ledcSetup(0, freq, 8);
   ledcAttachPin(BUZZER_PIN, 0);
   ledcWrite(0, 128);
-  delay(durationMs);
+  vTaskDelay(pdMS_TO_TICKS(durationMs));
   ledcWrite(0, 0);
-  delay(50);
+  vTaskDelay(pdMS_TO_TICKS(50));
 }
 
 void playMelody(int* melody, int* durations, int length) {
@@ -84,9 +87,9 @@ void playMelody(int* melody, int* durations, int length) {
       ledcAttachPin(BUZZER_PIN, 0);
       ledcWrite(0, 128);
     }
-    delay(noteDuration);
+    vTaskDelay(pdMS_TO_TICKS(noteDuration));
     ledcWrite(0, 0);
-    delay((int)(noteDuration * 0.3));
+    vTaskDelay(pdMS_TO_TICKS((int)(noteDuration * 0.3)));
   }
 }
 
@@ -94,25 +97,28 @@ void playBeepPattern() {
   for (int i = 0; i < 3; i++) {
     if (digitalRead(BUTTON_PIN) == LOW) return;
     playBeep(1000, 300);
-    delay(200);
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
-  delay(500);
+  vTaskDelay(pdMS_TO_TICKS(500));
 }
 
 void snooze() {
+  xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
   snoozed     = true;
   alarmActive = false;
   ledcWrite(0, 0);
 
   snoozeMinute = currentMinute + SNOOZE_MINS;
   snoozeHour   = currentHour;
+  xSemaphoreGive(stateMutex);
+
   if (snoozeMinute >= 60) {
     snoozeMinute -= 60;
     snoozeHour = (snoozeHour + 1) % 24;
   }
 
   playBeep(1000, 100);
-  delay(80);
+  vTaskDelay(pdMS_TO_TICKS(80));
   playBeep(1200, 100);
 }
 
@@ -159,6 +165,7 @@ void saveAlarmSettings() {
 // --- HTTP handlers ---
 
 void handleRoot() {
+  server.sendHeader("Cache-Control", "max-age=3600");  // ADD THIS
   server.send(200, "text/html", R"rawhtml(
 <!DOCTYPE html>
 <html lang="en">
@@ -168,70 +175,177 @@ void handleRoot() {
   <title>Smart Clock</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111; color: #f0f0f0; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; padding: 32px 16px; }
-    .card { background: #1e1e1e; border-radius: 16px; padding: 28px 24px; width: 100%; max-width: 360px; }
-    h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 24px; color: #fff; }
-    label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
-    input[type="number"] { width: 100%; padding: 12px 14px; background: #2a2a2a; border: 1px solid #333; border-radius: 10px; color: #f0f0f0; font-size: 1rem; outline: none; transition: border-color 0.2s; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #111;
+      color: #f0f0f0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+
+    .card {
+      background: #1e1e1e;
+      border-radius: 16px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    h1 {
+      font-size: 1.3rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+      color: #fff;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: #888;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      padding: 12px 14px;
+      background: #2a2a2a;
+      border: 1px solid #333;
+      border-radius: 10px;
+      color: #f0f0f0;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
     input:focus { border-color: #4a9eff; }
-    .row { display: flex; gap: 12px; }
+
+    .row {
+      display: flex;
+      gap: 12px;
+    }
+
     .row .field { flex: 1; }
+
     .field { margin-bottom: 20px; }
-    .ringtone-group { display: flex; gap: 10px; margin-bottom: 24px; }
-    .rt-btn { flex: 1; padding: 12px; border: 2px solid #333; border-radius: 10px; background: #2a2a2a; color: #aaa; font-size: 0.95rem; cursor: pointer; transition: all 0.15s; }
-    .rt-btn.active { border-color: #4a9eff; background: #1a3a5c; color: #fff; }
-    .set-btn { width: 100%; padding: 14px; background: #4a9eff; color: #fff; border: none; border-radius: 10px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+
+    .ringtone-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .rt-btn {
+      flex: 1;
+      padding: 12px;
+      border: 2px solid #333;
+      border-radius: 10px;
+      background: #2a2a2a;
+      color: #aaa;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .rt-btn.active {
+      border-color: #4a9eff;
+      background: #1a3a5c;
+      color: #fff;
+    }
+
+    .set-btn {
+      width: 100%;
+      padding: 14px;
+      background: #4a9eff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
     .set-btn:hover { background: #3a8eef; }
     .set-btn:active { background: #2a7edf; }
-    .status { margin-top: 14px; text-align: center; font-size: 0.9rem; min-height: 1.2em; color: #888; }
-    .status.ok { color: #4caf50; }
+
+    .status {
+      margin-top: 14px;
+      text-align: center;
+      font-size: 0.9rem;
+      min-height: 1.2em;
+      color: #888;
+    }
+
+    .status.ok  { color: #4caf50; }
     .status.err { color: #f44336; }
   </style>
 </head>
 <body>
 <div class="card">
   <h1>Smart Clock</h1>
+
   <div class="row">
     <div class="field">
-      <label>Hour (0-23)</label>
+      <label>Hour (0–23)</label>
       <input type="number" id="hour" min="0" max="23" placeholder="7">
     </div>
     <div class="field">
-      <label>Minute (0-59)</label>
+      <label>Minute (0–59)</label>
       <input type="number" id="minute" min="0" max="59" placeholder="30">
     </div>
   </div>
+
   <label style="margin-bottom:10px;">Ringtone</label>
   <div class="ringtone-group">
     <button class="rt-btn active" data-rt="0" onclick="selectRingtone(0)">Nokia</button>
     <button class="rt-btn"       data-rt="1" onclick="selectRingtone(1)">Beeps</button>
   </div>
+
   <button class="set-btn" onclick="setAlarm()">Set Alarm</button>
   <div class="status" id="status"></div>
 </div>
+
 <script>
   let selectedRingtone = 0;
+
   function selectRingtone(rt) {
     selectedRingtone = rt;
     document.querySelectorAll('.rt-btn').forEach(btn => {
       btn.classList.toggle('active', parseInt(btn.dataset.rt) === rt);
     });
   }
+
   function setStatus(msg, type) {
     const el = document.getElementById('status');
     el.textContent = msg;
     el.className = 'status ' + (type || '');
   }
+
   async function setAlarm() {
     const h = parseInt(document.getElementById('hour').value);
     const m = parseInt(document.getElementById('minute').value);
-    if (isNaN(h) || h < 0 || h > 23) { setStatus('Hour must be 0-23.', 'err'); return; }
-    if (isNaN(m) || m < 0 || m > 59) { setStatus('Minute must be 0-59.', 'err'); return; }
+
+    if (isNaN(h) || h < 0 || h > 23) { setStatus('Hour must be 0–23.', 'err'); return; }
+    if (isNaN(m) || m < 0 || m > 59) { setStatus('Minute must be 0–59.', 'err'); return; }
+
     try {
       const res = await fetch('/set?hour=' + h + '&minute=' + m + '&ringtone=' + selectedRingtone);
-      if (res.ok) { setStatus('Alarm set!', 'ok'); } else { setStatus('Error ' + res.status, 'err'); }
-    } catch (e) { setStatus('Could not reach clock.', 'err'); }
+      if (res.ok) {
+        setStatus('Alarm set!', 'ok');
+      } else {
+        setStatus(`Error ${res.status}`, 'err');
+      }
+    } catch (e) {
+      setStatus('Could not reach ESP32.', 'err');
+    }
   }
+
   async function fetchStatus() {
     try {
       const res  = await fetch('/status');
@@ -239,8 +353,12 @@ void handleRoot() {
       document.getElementById('hour').value   = data.hour;
       document.getElementById('minute').value = data.minute;
       selectRingtone(data.ringtone);
-    } catch (_) {}
+      setStatus('');
+    } catch (_) {
+      // silently ignore — ESP32 might not be online yet
+    }
   }
+
   window.addEventListener('load', fetchStatus);
 </script>
 </body>
@@ -261,9 +379,11 @@ void handleSet() {
     server.send(400, "text/plain", "Invalid values");
     return;
   }
+  xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
   alarmHour   = h;
   alarmMinute = m;
   ringtone    = r;
+  xSemaphoreGive(stateMutex);
   saveAlarmSettings();
   server.send(200, "text/plain", "OK");
 }
@@ -278,6 +398,82 @@ void handleStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// FreeRTOS tasks
+
+void displayTask(void* pvParameters) {
+  for (;;) {
+    xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
+    updateDisplay();
+    xSemaphoreGive(stateMutex);
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+}
+
+void alarmTask(void* pvParameters) {
+  for (;;) {
+    xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
+    bool active = alarmActive;
+    int  rt     = ringtone;
+    xSemaphoreGive(stateMutex);
+
+    if (active) {
+      if (rt == 0) {
+        playMelody(nokiaMelody, nokiaDurations, 14);
+      } else {
+        playBeepPattern();
+      }
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+  }
+}
+
+void buttonTask(void* pvParameters) {
+  for (;;) {
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      vTaskDelay(pdMS_TO_TICKS(50));  // debounce
+      if (digitalRead(BUTTON_PIN) == LOW) {
+        xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
+        bool active = alarmActive;
+        xSemaphoreGive(stateMutex);
+        if (active) snooze();
+        while (digitalRead(BUTTON_PIN) == LOW) {
+          vTaskDelay(pdMS_TO_TICKS(10));
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+void serverTask(void* pvParameters) {
+  for (;;) {
+    server.handleClient();
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
+      currentHour   = timeinfo.tm_hour;
+      currentMinute = timeinfo.tm_min;
+      currentSecond = timeinfo.tm_sec;
+
+      bool isAlarmTime  = (currentHour == alarmHour && currentMinute == alarmMinute
+                           && !alarmActive && !snoozed);
+      bool isSnoozeTime = (currentHour == snoozeHour && currentMinute == snoozeMinute
+                           && currentSecond == 0 && snoozed);
+
+      if (isAlarmTime || isSnoozeTime) {
+        alarmActive = true;
+        snoozed     = false;
+      }
+      xSemaphoreGive(stateMutex);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 void setup() {
   Serial.begin(115200);
@@ -288,6 +484,8 @@ void setup() {
   ledcSetup(0, 1000, 8);
   ledcAttachPin(BUZZER_PIN, 0);
   ledcWrite(0, 0);
+
+  stateMutex = xSemaphoreCreateMutex();
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) while (1);
   display.clearDisplay();
@@ -321,7 +519,7 @@ void setup() {
     display.display();
   });
 
-  wm.resetSettings();  // ADD THIS LINE temporarily
+  //wm.resetSettings();
   if (!wm.autoConnect("SmartClock-Setup")) {
     Serial.println(">>>WiFi failed — restarting");
     ESP.restart();
@@ -357,47 +555,12 @@ void setup() {
   server.on("/status", HTTP_GET, handleStatus);
   server.begin();
 
-  //display.clearDisplay();
-  //display.display();
+  xTaskCreatePinnedToCore(serverTask,  "Server",  4096, NULL, 2, NULL, 0);
+  xTaskCreatePinnedToCore(displayTask, "Display", 2048, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(alarmTask,   "Alarm",   4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(buttonTask,  "Button",  1024, NULL, 3, NULL, 1);
 }
 
 void loop() {
-  server.handleClient();
-
-  // Read current time from NTP-synced internal clock
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    currentHour   = timeinfo.tm_hour;
-    currentMinute = timeinfo.tm_min;
-    currentSecond = timeinfo.tm_sec;
-  }
-
-  // Trigger alarm
-  bool isAlarmTime = (currentHour == alarmHour && currentMinute == alarmMinute && !alarmActive && !snoozed);
-  bool isSnoozeTime = (currentHour == snoozeHour  && currentMinute == snoozeMinute  && currentSecond == 0 && snoozed);
-
-  if (isAlarmTime || isSnoozeTime) {
-    alarmActive = true;
-    snoozed     = false;
-  }
-
-  // Play melody if alarming
-  if (alarmActive) {
-    if (ringtone == 0) {
-      playMelody(nokiaMelody, nokiaDurations, 14);
-    } else {
-      playBeepPattern();
-    }
-  }
-
-  // Snooze button
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    delay(50);
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      if (alarmActive) snooze();
-      while (digitalRead(BUTTON_PIN) == LOW);
-    }
-  }
-
-  updateDisplay();
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }
