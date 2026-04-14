@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"name": "Smart-Clock",
+			"path": "../../../../Desktop/Smart-Clock"
+		},
+		{
+			"name": "smart-clock",
+			"path": "."
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "smart-clock"
+	}
+}
