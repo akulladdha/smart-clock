@@ -3,217 +3,591 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Clock</title>
+  <title>Smart Alarm</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg:       #0a0a0f;
+      --surface:  #12121a;
+      --border:   #1e1e2e;
+      --muted:    #3a3a52;
+      --text:     #e8e8f0;
+      --sub:      #6b6b88;
+      --gentle:   #4fc3f7;
+      --normal:   #ffb74d;
+      --nuclear:  #f06292;
+      --green:    #69f0ae;
+      --mono:     'Space Mono', monospace;
+      --sans:     'Syne', sans-serif;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      font-family: -apple-system, sans-serif;
-      background: #111; color: #f0f0f0;
-      display: flex; justify-content: center;
-      padding: 32px 16px;
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 16px 60px;
     }
+
+    .container {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .header h1 {
+      font-size: 1.7rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .header .tag {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--sub);
+      border: 1px solid var(--muted);
+      padding: 2px 7px;
+      border-radius: 100px;
+      letter-spacing: 0.05em;
+    }
+
+    /* ---- Live clock ---- */
+    .clock-display {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .clock-time {
+      font-family: var(--mono);
+      font-size: 2.6rem;
+      font-weight: 700;
+      letter-spacing: -1px;
+      color: var(--text);
+    }
+    .clock-meta {
+      text-align: right;
+    }
+    .clock-label {
+      font-size: 0.7rem;
+      color: var(--sub);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 4px;
+    }
+    .alarm-set-time {
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      color: var(--gentle);
+    }
+    .strategy-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 100px;
+      margin-top: 6px;
+      display: inline-block;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .badge-gentle  { background: rgba(79,195,247,0.15); color: var(--gentle); }
+    .badge-normal  { background: rgba(255,183,77,0.15);  color: var(--normal); }
+    .badge-nuclear { background: rgba(240,98,146,0.15);  color: var(--nuclear); }
+
+    /* ---- Cards ---- */
     .card {
-      background: #1e1e1e; border-radius: 16px;
-      padding: 28px 24px; width: 100%; max-width: 360px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 24px;
     }
-    h1 { font-size: 1.3rem; margin-bottom: 24px; color: #fff; }
-    label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 6px; text-transform: uppercase; }
+    .card-label {
+      font-size: 0.7rem;
+      color: var(--sub);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 16px;
+    }
+
+    /* ---- Time inputs ---- */
+    .time-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .time-row .field { flex: 1; }
+    label {
+      display: block;
+      font-size: 0.72rem;
+      color: var(--sub);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
     input[type="number"] {
-      width: 100%; padding: 12px 14px; background: #2a2a2a;
-      border: 1px solid #333; border-radius: 10px;
-      color: #f0f0f0; font-size: 1rem; outline: none;
+      width: 100%;
+      padding: 11px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 1.05rem;
+      outline: none;
+      transition: border-color 0.15s;
     }
-    input:focus { border-color: #4a9eff; }
-    .row { display: flex; gap: 12px; }
-    .row .field { flex: 1; }
-    .field { margin-bottom: 20px; }
-    .ringtone-group { display: flex; gap: 10px; margin-bottom: 24px; }
-    .rt-btn {
-      flex: 1; padding: 12px; border: 2px solid #333;
-      border-radius: 10px; background: #2a2a2a;
-      color: #aaa; font-size: 0.95rem; cursor: pointer;
+    input[type="number"]:focus { border-color: var(--muted); }
+
+    /* ---- Strategy selector ---- */
+    .strategy-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 20px;
     }
-    .rt-btn.active { border-color: #4a9eff; background: #1a3a5c; color: #fff; }
-    .set-btn {
-      width: 100%; padding: 14px; background: #4a9eff;
-      color: #fff; border: none; border-radius: 10px;
-      font-size: 1rem; font-weight: 600; cursor: pointer;
+    .strat-btn {
+      padding: 14px 8px 12px;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      background: var(--bg);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
     }
-    .status { margin-top: 14px; text-align: center; font-size: 0.9rem; color: #888; }
-    .status.ok  { color: #4caf50; }
-    .status.err { color: #f44336; }
+    .strat-icon { font-size: 1.4rem; }
+    .strat-name {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--sub);
+      transition: color 0.15s;
+    }
+    .strat-desc {
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.3;
+    }
+    .strat-btn[data-s="0"].active { border-color: var(--gentle); background: rgba(79,195,247,0.06); }
+    .strat-btn[data-s="0"].active .strat-name { color: var(--gentle); }
+    .strat-btn[data-s="1"].active { border-color: var(--normal); background: rgba(255,183,77,0.06); }
+    .strat-btn[data-s="1"].active .strat-name { color: var(--normal); }
+    .strat-btn[data-s="2"].active { border-color: var(--nuclear); background: rgba(240,98,146,0.06); }
+    .strat-btn[data-s="2"].active .strat-name { color: var(--nuclear); }
+
+    /* ---- Buttons ---- */
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--text); color: var(--bg); }
+    .btn-demo    { background: rgba(240,98,146,0.15); color: var(--nuclear); border: 1px solid rgba(240,98,146,0.3); }
+    .btn-dismiss { background: rgba(105,240,174,0.12); color: var(--green);  border: 1px solid rgba(105,240,174,0.25); margin-top: 10px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ---- Status toast ---- */
+    .toast {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      text-align: center;
+      color: var(--sub);
+      min-height: 18px;
+      transition: color 0.2s;
+    }
+    .toast.ok  { color: var(--green); }
+    .toast.err { color: var(--nuclear); }
+
+    /* ---- Active alarm panel ---- */
+    .alarm-active-panel {
+      background: rgba(240,98,146,0.06);
+      border: 1px solid rgba(240,98,146,0.25);
+      border-radius: 14px;
+      padding: 20px 24px;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .alarm-active-panel.visible { display: flex; }
+    .alarm-ring {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pulse-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--nuclear);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50%       { transform: scale(1.4); opacity: 0.5; }
+    }
+    .alarm-ring-text {
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: var(--nuclear);
+    }
+
+    /* ---- Puzzle ---- */
+    .puzzle-section {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .puzzle-section.visible { display: flex; }
+    .puzzle-q {
+      font-family: var(--mono);
+      font-size: 2rem;
+      font-weight: 700;
+      text-align: center;
+      color: var(--text);
+    }
+    .puzzle-input-row { display: flex; gap: 8px; }
+    .puzzle-input-row input {
+      flex: 1;
+      padding: 11px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      outline: none;
+    }
+    .btn-submit {
+      padding: 11px 20px;
+      background: var(--nuclear);
+      color: #fff;
+      border: none;
+      border-radius: 9px;
+      font-family: var(--sans);
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .puzzle-feedback {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      text-align: center;
+      min-height: 16px;
+    }
+    .puzzle-feedback.ok  { color: var(--green); }
+    .puzzle-feedback.err { color: var(--nuclear); }
+
+    /* ---- Snooze count ---- */
+    .snooze-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .snooze-label { font-size: 0.75rem; color: var(--sub); }
+    .snooze-count {
+      font-family: var(--mono);
+      font-size: 1rem;
+      color: var(--normal);
+    }
+
+    /* ---- Separator ---- */
+    hr { border: none; border-top: 1px solid var(--border); }
   </style>
 </head>
 <body>
-<div class="card">
-  <h1>Smart Clock</h1>
+<div class="container">
 
-  <!-- Sleep Debt Panel -->
-  <div id="sleep-panel" style="background:#2a2a2a;border-radius:10px;padding:12px;margin-bottom:20px;">
-    <div style="font-size:0.75rem;color:#888;text-transform:uppercase;margin-bottom:4px;">Sleep Debt</div>
-    <div id="sleep-debt" style="font-size:1.4rem;font-weight:600;color:#4a9eff;">--</div>
-    <div id="sleep-status-text" style="font-size:0.8rem;color:#888;margin-top:4px;">Loading...</div>
+  <!-- Header -->
+  <div class="header">
+    <h1>Smart Alarm</h1>
+    <span class="tag">ESP32</span>
   </div>
 
-  <div class="row">
-    <div class="field">
-      <label>Hour (0-23)</label>
-      <input type="number" id="hour" min="0" max="23" placeholder="7">
-    </div>
-    <div class="field">
-      <label>Minute (0-59)</label>
-      <input type="number" id="minute" min="0" max="59" placeholder="30">
+  <!-- Live clock + current alarm state -->
+  <div class="clock-display">
+    <div class="clock-time" id="live-clock">--:--</div>
+    <div class="clock-meta">
+      <div class="clock-label">Alarm set</div>
+      <div class="alarm-set-time" id="alarm-set-display">--:--</div>
+      <span class="strategy-badge badge-normal" id="strategy-badge">Normal</span>
     </div>
   </div>
-  <label style="margin-bottom:10px;">Ringtone</label>
-  <div class="ringtone-group">
-    <button class="rt-btn active" data-rt="0" onclick="selectRingtone(0)">Nokia</button>
-    <button class="rt-btn"       data-rt="1" onclick="selectRingtone(1)">Beeps</button>
+
+  <!-- Active alarm panel (shown when alarm fires) -->
+  <div class="alarm-active-panel" id="alarm-panel">
+    <div class="alarm-ring">
+      <div class="pulse-dot"></div>
+      <span class="alarm-ring-text">Alarm Ringing</span>
+    </div>
+
+    <!-- Puzzle subsection (NUCLEAR only) -->
+    <div class="puzzle-section" id="puzzle-section">
+      <div style="font-size:0.7rem;color:var(--sub);text-transform:uppercase;letter-spacing:0.1em;">
+        Solve to dismiss
+      </div>
+      <div class="puzzle-q" id="puzzle-q">-- + -- = ?</div>
+      <div class="puzzle-input-row">
+        <input type="number" id="puzzle-input" placeholder="Answer">
+        <button class="btn-submit" onclick="submitPuzzle()">OK</button>
+      </div>
+      <div class="puzzle-feedback" id="puzzle-feedback"></div>
+    </div>
+
+    <button class="btn btn-dismiss" id="dismiss-btn" onclick="dismissAlarm()">
+      Dismiss Alarm
+    </button>
+
+    <div class="snooze-row">
+      <span class="snooze-label">Snooze count</span>
+      <span class="snooze-count" id="snooze-count">0</span>
+    </div>
   </div>
-  <button class="set-btn" onclick="setAlarm()">Set Alarm</button>
 
-  <!-- Sleep Button -->
-  <button class="set-btn" style="background:#534AB7;margin-top:10px;" onclick="toggleSleep()">
-    Going to Sleep
-  </button>
+  <!-- Configure alarm -->
+  <div class="card">
+    <div class="card-label">Set Alarm</div>
 
-  <!-- Dismiss Button -->
-  <button class="set-btn" style="background:#4caf50;margin-top:10px;" onclick="dismissAlarm()">
-    Dismiss Alarm
-  </button>
+    <div class="time-row">
+      <div class="field">
+        <label>Hour (0–23)</label>
+        <input type="number" id="hour" min="0" max="23" placeholder="7">
+      </div>
+      <div class="field">
+        <label>Minute (0–59)</label>
+        <input type="number" id="minute" min="0" max="59" placeholder="30">
+      </div>
+    </div>
 
-  <!-- Puzzle Section (hidden until alarm fires) -->
-  <div id="puzzle-section" style="display:none;background:#2a2a2a;border-radius:10px;padding:16px;margin-top:16px;">
-    <div style="font-size:0.8rem;color:#888;text-transform:uppercase;margin-bottom:8px;">Wake Up Puzzle</div>
-    <div id="puzzle-question" style="font-size:1.8rem;font-weight:700;color:#fff;margin-bottom:12px;text-align:center;"></div>
-    <input type="number" id="puzzle-input" placeholder="Your answer" style="margin-bottom:10px;">
-    <button class="set-btn" onclick="submitPuzzle()">Submit</button>
-    <div id="puzzle-status" style="margin-top:8px;text-align:center;color:#888;font-size:0.9rem;"></div>
+    <div class="card-label">Wake Strategy</div>
+    <div class="strategy-grid">
+      <button class="strat-btn" data-s="0" onclick="selectStrategy(0)">
+        <span class="strat-icon">🌅</span>
+        <span class="strat-name">Gentle</span>
+        <span class="strat-desc">Nokia ringtone<br>warm LED</span>
+      </button>
+      <button class="strat-btn active" data-s="1" onclick="selectStrategy(1)">
+        <span class="strat-icon">🔔</span>
+        <span class="strat-name">Normal</span>
+        <span class="strat-desc">Beep bursts<br>red LED pulse</span>
+      </button>
+      <button class="strat-btn" data-s="2" onclick="selectStrategy(2)">
+        <span class="strat-icon">💀</span>
+        <span class="strat-name">Nuclear</span>
+        <span class="strat-desc">Active buzzer<br>+ math puzzle</span>
+      </button>
+    </div>
+
+    <button class="btn btn-primary" onclick="setAlarm()">Set Alarm</button>
+    <div class="toast" id="toast"></div>
   </div>
 
-  <div class="status" id="status"></div>
+  <!-- Demo controls -->
+  <div class="card">
+    <div class="card-label">Demo Controls</div>
+    <button class="btn btn-demo" onclick="triggerAlarm()">
+      ▶ Fire Alarm Now
+    </button>
+  </div>
+
 </div>
+
 <script>
-  // *** CHANGE THIS TO YOUR ESP32'S IP ***
-  const ESP_IP = "http://172.20.10.3";
+  // *** UPDATE THIS TO YOUR ESP32'S IP ***
+  const ESP = "http://172.20.10.3";
 
-  let selectedRingtone = 0;
+  let selectedStrategy = 1;
+  let pollInterval     = null;
 
-  function selectRingtone(rt) {
-    selectedRingtone = rt;
-    document.querySelectorAll('.rt-btn').forEach(btn => {
-      btn.classList.toggle('active', parseInt(btn.dataset.rt) === rt);
+  // ---- Helpers ----
+
+  function toast(msg, type = '') {
+    const el = document.getElementById('toast');
+    el.textContent  = msg;
+    el.className    = 'toast ' + type;
+  }
+
+  function selectStrategy(s) {
+    selectedStrategy = s;
+    document.querySelectorAll('.strat-btn').forEach(b => {
+      b.classList.toggle('active', parseInt(b.dataset.s) === s);
     });
   }
 
-  function setStatus(msg, type) {
-    const el = document.getElementById('status');
-    el.textContent = msg;
-    el.className = 'status ' + (type || '');
+  // ---- Live browser clock (visual only — source of truth is NTP on ESP32) ----
+  function tickClock() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    document.getElementById('live-clock').textContent = `${h}:${m}`;
+  }
+  setInterval(tickClock, 1000);
+  tickClock();
+
+  // ---- Strategy badge ----
+  const STRATEGY = ['Gentle', 'Normal', 'Nuclear'];
+  const BADGE_CLASS = ['badge-gentle', 'badge-normal', 'badge-nuclear'];
+
+  function updateBadge(s) {
+    const el = document.getElementById('strategy-badge');
+    el.textContent = STRATEGY[s];
+    el.className   = 'strategy-badge ' + BADGE_CLASS[s];
   }
 
+  // ---- Set alarm ----
   async function setAlarm() {
     const h = parseInt(document.getElementById('hour').value);
     const m = parseInt(document.getElementById('minute').value);
-    if (isNaN(h) || h < 0 || h > 23) { setStatus('Hour must be 0-23.', 'err'); return; }
-    if (isNaN(m) || m < 0 || m > 59) { setStatus('Minute must be 0-59.', 'err'); return; }
+    if (isNaN(h) || h < 0 || h > 23) { toast('Hour must be 0–23', 'err'); return; }
+    if (isNaN(m) || m < 0 || m > 59) { toast('Minute must be 0–59', 'err'); return; }
     try {
-      const res = await fetch(`${ESP_IP}/set?hour=${h}&minute=${m}&ringtone=${selectedRingtone}`);
-      if (res.ok) setStatus('Alarm set!', 'ok');
-      else        setStatus('Error ' + res.status, 'err');
-    } catch (e) {
-      setStatus('Could not reach ESP32. Check IP and network.', 'err');
+      const r = await fetch(`${ESP}/set?hour=${h}&minute=${m}&strategy=${selectedStrategy}`);
+      if (r.ok) {
+        toast('Alarm set', 'ok');
+        document.getElementById('alarm-set-display').textContent =
+          `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+        updateBadge(selectedStrategy);
+      } else {
+        toast(`Error ${r.status}`, 'err');
+      }
+    } catch (_) { toast('Cannot reach ESP32 — check IP', 'err'); }
+  }
+
+  // ---- Trigger alarm now (demo) ----
+  async function triggerAlarm() {
+    try {
+      await fetch(`${ESP}/trigger`);
+      toast('Alarm fired!', 'ok');
+      setTimeout(pollStatus, 500);
+    } catch (_) { toast('Cannot reach ESP32', 'err'); }
+  }
+
+  // ---- Dismiss alarm ----
+  async function dismissAlarm() {
+    try {
+      const r = await fetch(`${ESP}/dismiss`);
+      if (r.ok) {
+        toast('Dismissed', 'ok');
+        setAlarmPanelVisible(false);
+      } else if (r.status === 403) {
+        toast('Solve the puzzle first', 'err');
+      }
+    } catch (_) { toast('Cannot reach ESP32', 'err'); }
+  }
+
+  // ---- Puzzle ----
+  async function submitPuzzle() {
+    const ans = document.getElementById('puzzle-input').value;
+    const fb  = document.getElementById('puzzle-feedback');
+    try {
+      const r = await fetch(`${ESP}/puzzle/answer?answer=${ans}`);
+      const d = await r.json();
+      if (d.correct) {
+        fb.textContent = 'Correct! Good morning.';
+        fb.className   = 'puzzle-feedback ok';
+        setTimeout(() => setAlarmPanelVisible(false), 800);
+      } else {
+        fb.textContent = `Wrong — attempt ${d.attempts}`;
+        fb.className   = 'puzzle-feedback err';
+        document.getElementById('puzzle-input').value = '';
+        document.getElementById('puzzle-input').focus();
+      }
+    } catch (_) { fb.textContent = 'Error'; }
+  }
+
+  document.addEventListener('keydown', e => {
+    const ps = document.getElementById('puzzle-section');
+    if (e.key === 'Enter' && ps.classList.contains('visible')) submitPuzzle();
+  });
+
+  // ---- UI state ----
+  function setAlarmPanelVisible(v) {
+    const panel = document.getElementById('alarm-panel');
+    panel.classList.toggle('visible', v);
+    if (!v) {
+      document.getElementById('puzzle-section').classList.remove('visible');
+      document.getElementById('puzzle-feedback').textContent = '';
+      document.getElementById('puzzle-input').value = '';
     }
   }
 
-  async function fetchStatus() {
+  // ---- Poll ESP32 status ----
+  async function pollStatus() {
     try {
-      const res  = await fetch(`${ESP_IP}/status`);
-      const data = await res.json();
-      document.getElementById('hour').value   = data.hour;
-      document.getElementById('minute').value = data.minute;
-      selectRingtone(data.ringtone);
-    } catch (_) {}
-  }
+      const r = await fetch(`${ESP}/status`);
+      const d = await r.json();
 
-  async function dismissAlarm() {
-    try {
-      const res = await fetch(`${ESP_IP}/dismiss`);
-      if (res.ok) {
-        setStatus('Dismissed!', 'ok');
-        document.getElementById('puzzle-section').style.display = 'none';
-      }
-    } catch (e) { setStatus('Could not reach ESP32.', 'err'); }
-  }
+      document.getElementById('alarm-set-display').textContent =
+        `${String(d.hour).padStart(2,'0')}:${String(d.minute).padStart(2,'0')}`;
+      updateBadge(d.strategy);
+      document.getElementById('snooze-count').textContent = d.snooze_count;
 
-  async function toggleSleep() {
-    try {
-      await fetch(`${ESP_IP}/sleep_toggle`);
-      fetchSleepStatus();
-    } catch (e) { setStatus('Could not reach ESP32.', 'err'); }
-  }
-
-  async function fetchSleepStatus() {
-    try {
-      const res  = await fetch(`${ESP_IP}/sleep_status`);
-      const data = await res.json();
-      const debtEl   = document.getElementById('sleep-debt');
-      const statusEl = document.getElementById('sleep-status-text');
-      if (data.sleeping) {
-        debtEl.textContent   = 'Sleeping...';
-        debtEl.style.color   = '#7B68EE';
-        statusEl.textContent = 'Press sleep button on device to wake';
-      } else if (data.sleep_debt_hours > 0.5) {
-        debtEl.textContent   = `+${data.sleep_debt_hours.toFixed(1)}h debt`;
-        debtEl.style.color   = '#f44336';
-        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h — target: 8h`;
-      } else if (data.sleep_debt_hours < -0.5) {
-        debtEl.textContent   = `${Math.abs(data.sleep_debt_hours).toFixed(1)}h surplus`;
-        debtEl.style.color   = '#4caf50';
-        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h — well rested`;
+      if (d.alarm_active) {
+        setAlarmPanelVisible(true);
+        pollPuzzle(d.strategy);
       } else {
-        debtEl.textContent   = 'On track';
-        debtEl.style.color   = '#4caf50';
-        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h`;
+        setAlarmPanelVisible(false);
       }
+
+      // Sync inputs only if empty (don't clobber user edits)
+      const hEl = document.getElementById('hour');
+      const mEl = document.getElementById('minute');
+      if (!hEl.value) hEl.value = d.hour;
+      if (!mEl.value) mEl.value = d.minute;
+      if (selectedStrategy !== d.strategy) selectStrategy(d.strategy);
     } catch (_) {}
   }
 
-  async function pollPuzzle() {
+  async function pollPuzzle(strategy) {
+    if (strategy !== 2) {
+      document.getElementById('puzzle-section').classList.remove('visible');
+      return;
+    }
     try {
-      const res  = await fetch(`${ESP_IP}/puzzle`);
-      const data = await res.json();
-      const section = document.getElementById('puzzle-section');
-      if (data.active) {
-        section.style.display = 'block';
-        document.getElementById('puzzle-question').textContent = data.question + ' = ?';
+      const r = await fetch(`${ESP}/puzzle`);
+      const d = await r.json();
+      const ps = document.getElementById('puzzle-section');
+      if (d.active) {
+        ps.classList.add('visible');
+        document.getElementById('puzzle-q').textContent = d.question + ' = ?';
+        // NUCLEAR: hide dismiss button — must solve puzzle
+        document.getElementById('dismiss-btn').style.display = 'none';
       } else {
-        section.style.display = 'none';
+        ps.classList.remove('visible');
+        document.getElementById('dismiss-btn').style.display = '';
       }
     } catch (_) {}
   }
 
-  async function submitPuzzle() {
-    const ans = document.getElementById('puzzle-input').value;
-    try {
-      const res  = await fetch(`${ESP_IP}/puzzle/answer?answer=${ans}`);
-      const data = await res.json();
-      const statusEl = document.getElementById('puzzle-status');
-      if (data.correct) {
-        statusEl.textContent = 'Correct! Good morning!';
-        statusEl.style.color = '#4caf50';
-        document.getElementById('puzzle-section').style.display = 'none';
-      } else {
-        statusEl.textContent = `Wrong — try again (attempt ${data.attempts})`;
-        statusEl.style.color = '#f44336';
-      }
-    } catch (_) {}
-  }
-
-  // Poll puzzle every 3 seconds and sleep status every 30 seconds
-  setInterval(pollPuzzle, 3000);
-  setInterval(fetchSleepStatus, 30000);
-  window.addEventListener('load', () => { fetchStatus(); fetchSleepStatus(); });
+  // Init
+  pollStatus();
+  setInterval(pollStatus, 3000);
 </script>
 </body>
 </html>
