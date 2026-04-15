@@ -47,6 +47,14 @@
 <body>
 <div class="card">
   <h1>Smart Clock</h1>
+
+  <!-- Sleep Debt Panel -->
+  <div id="sleep-panel" style="background:#2a2a2a;border-radius:10px;padding:12px;margin-bottom:20px;">
+    <div style="font-size:0.75rem;color:#888;text-transform:uppercase;margin-bottom:4px;">Sleep Debt</div>
+    <div id="sleep-debt" style="font-size:1.4rem;font-weight:600;color:#4a9eff;">--</div>
+    <div id="sleep-status-text" style="font-size:0.8rem;color:#888;margin-top:4px;">Loading...</div>
+  </div>
+
   <div class="row">
     <div class="field">
       <label>Hour (0-23)</label>
@@ -63,6 +71,26 @@
     <button class="rt-btn"       data-rt="1" onclick="selectRingtone(1)">Beeps</button>
   </div>
   <button class="set-btn" onclick="setAlarm()">Set Alarm</button>
+
+  <!-- Sleep Button -->
+  <button class="set-btn" style="background:#534AB7;margin-top:10px;" onclick="toggleSleep()">
+    Going to Sleep
+  </button>
+
+  <!-- Dismiss Button -->
+  <button class="set-btn" style="background:#4caf50;margin-top:10px;" onclick="dismissAlarm()">
+    Dismiss Alarm
+  </button>
+
+  <!-- Puzzle Section (hidden until alarm fires) -->
+  <div id="puzzle-section" style="display:none;background:#2a2a2a;border-radius:10px;padding:16px;margin-top:16px;">
+    <div style="font-size:0.8rem;color:#888;text-transform:uppercase;margin-bottom:8px;">Wake Up Puzzle</div>
+    <div id="puzzle-question" style="font-size:1.8rem;font-weight:700;color:#fff;margin-bottom:12px;text-align:center;"></div>
+    <input type="number" id="puzzle-input" placeholder="Your answer" style="margin-bottom:10px;">
+    <button class="set-btn" onclick="submitPuzzle()">Submit</button>
+    <div id="puzzle-status" style="margin-top:8px;text-align:center;color:#888;font-size:0.9rem;"></div>
+  </div>
+
   <div class="status" id="status"></div>
 </div>
 <script>
@@ -108,7 +136,84 @@
     } catch (_) {}
   }
 
-  window.addEventListener('load', fetchStatus);
+  async function dismissAlarm() {
+    try {
+      const res = await fetch(`${ESP_IP}/dismiss`);
+      if (res.ok) {
+        setStatus('Dismissed!', 'ok');
+        document.getElementById('puzzle-section').style.display = 'none';
+      }
+    } catch (e) { setStatus('Could not reach ESP32.', 'err'); }
+  }
+
+  async function toggleSleep() {
+    try {
+      await fetch(`${ESP_IP}/sleep_toggle`);
+      fetchSleepStatus();
+    } catch (e) { setStatus('Could not reach ESP32.', 'err'); }
+  }
+
+  async function fetchSleepStatus() {
+    try {
+      const res  = await fetch(`${ESP_IP}/sleep_status`);
+      const data = await res.json();
+      const debtEl   = document.getElementById('sleep-debt');
+      const statusEl = document.getElementById('sleep-status-text');
+      if (data.sleeping) {
+        debtEl.textContent   = 'Sleeping...';
+        debtEl.style.color   = '#7B68EE';
+        statusEl.textContent = 'Press sleep button on device to wake';
+      } else if (data.sleep_debt_hours > 0.5) {
+        debtEl.textContent   = `+${data.sleep_debt_hours.toFixed(1)}h debt`;
+        debtEl.style.color   = '#f44336';
+        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h — target: 8h`;
+      } else if (data.sleep_debt_hours < -0.5) {
+        debtEl.textContent   = `${Math.abs(data.sleep_debt_hours).toFixed(1)}h surplus`;
+        debtEl.style.color   = '#4caf50';
+        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h — well rested`;
+      } else {
+        debtEl.textContent   = 'On track';
+        debtEl.style.color   = '#4caf50';
+        statusEl.textContent = `Last night: ${data.last_sleep_hours.toFixed(1)}h`;
+      }
+    } catch (_) {}
+  }
+
+  async function pollPuzzle() {
+    try {
+      const res  = await fetch(`${ESP_IP}/puzzle`);
+      const data = await res.json();
+      const section = document.getElementById('puzzle-section');
+      if (data.active) {
+        section.style.display = 'block';
+        document.getElementById('puzzle-question').textContent = data.question + ' = ?';
+      } else {
+        section.style.display = 'none';
+      }
+    } catch (_) {}
+  }
+
+  async function submitPuzzle() {
+    const ans = document.getElementById('puzzle-input').value;
+    try {
+      const res  = await fetch(`${ESP_IP}/puzzle/answer?answer=${ans}`);
+      const data = await res.json();
+      const statusEl = document.getElementById('puzzle-status');
+      if (data.correct) {
+        statusEl.textContent = 'Correct! Good morning!';
+        statusEl.style.color = '#4caf50';
+        document.getElementById('puzzle-section').style.display = 'none';
+      } else {
+        statusEl.textContent = `Wrong — try again (attempt ${data.attempts})`;
+        statusEl.style.color = '#f44336';
+      }
+    } catch (_) {}
+  }
+
+  // Poll puzzle every 3 seconds and sleep status every 30 seconds
+  setInterval(pollPuzzle, 3000);
+  setInterval(fetchSleepStatus, 30000);
+  window.addEventListener('load', () => { fetchStatus(); fetchSleepStatus(); });
 </script>
 </body>
 </html>
