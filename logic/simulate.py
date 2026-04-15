@@ -152,7 +152,7 @@ def run_simulation(
         ctx = generate_context(week=week)
         arm = bandit.select_arm(ctx)
         woke, esc_steps, resp_time = sim.simulate_alarm(arm, ctx)
-        reward = compute_reward(woke, esc_steps, resp_time)
+        reward = compute_reward(woke, esc_steps, resp_time, strategy_used=ARMS[arm])
 
         event = AlarmEvent(
             context=ctx,
@@ -197,12 +197,12 @@ def evaluate_bandit(bandit: LinUCBBandit, n_eval: int = 200,
         best_arm = int(np.argmax([arm.expected_reward(x) for arm in bandit.arms]))
         rand_arm = random.randint(0, N_ARMS - 1)
 
-        for arm, reward_list, woke_count in [
-            (best_arm, bandit_rewards, None),
-            (rand_arm, random_rewards, None),
+        for arm, reward_list in [
+            (best_arm, bandit_rewards),
+            (rand_arm, random_rewards),
         ]:
             woke, esc, rt = sim.simulate_alarm(arm, ctx)
-            r = compute_reward(woke, esc, rt)
+            r = compute_reward(woke, esc, rt, strategy_used=ARMS[arm])
             reward_list.append(r)
 
         b_woke, *_ = sim.simulate_alarm(best_arm, ctx)

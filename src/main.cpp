@@ -5,40 +5,70 @@
 #include <WebServer.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
+#include <HTTPClient.h>
 #include <time.h>
 #include "esp_log.h"
 
-// --- NTP (adjust GMT_OFFSET_SEC for your timezone, e.g. 19800 = UTC+5:30) ---
-const char* NTP_SERVER      = "pool.ntp.org";
-const long  GMT_OFFSET_SEC  = -21600;
-const int   DST_OFFSET_SEC  = 3600;
+// ---------------------------------------------------------------------------
+// NTP
+// ---------------------------------------------------------------------------
+const char* NTP_SERVER     = "pool.ntp.org";
+const long  GMT_OFFSET_SEC = -21600;   // CST (UTC-6)
+const int   DST_OFFSET_SEC = 3600;
 
-// --- Hardware ---
-#define SCREEN_WIDTH 128
+// ---------------------------------------------------------------------------
+// Hardware
+// ---------------------------------------------------------------------------
+#define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#define BUZZER_PIN  25
-#define BUTTON_PIN  26
+#define BUZZER_PIN 25
+#define BUTTON_PIN 26
 
-// --- Alarm settings (persisted in NVS) ---
+// ---------------------------------------------------------------------------
+// Flask / LinUCB
+// ---------------------------------------------------------------------------
+const char* FLASK_IP = "http://10.146.157.13:5000";  // *** UPDATE THIS ***
+
+float         sleepHours     = 6.5f;
+float         minsUntilClass = 60.0f;
+int           semesterWeek   = 8;
+float         pastSnoozeRate = 0.0f;
+int           snoozeCount    = 0;
+int           currentStrategy  = 1;
+unsigned long alarmStartMs     = 0;
+
+// ---------------------------------------------------------------------------
+// Alarm settings (persisted in NVS)
+// ---------------------------------------------------------------------------
 int alarmHour   = 7;
 int alarmMinute = 30;
 int ringtone    = 0;   // 0 = Nokia, 1 = Beeps
 int SNOOZE_MINS = 5;
 
-// --- Clock state ---
-volatile int currentHour = 0, currentMinute = 0, currentSecond = 0;
+// ---------------------------------------------------------------------------
+// Clock state
+// ---------------------------------------------------------------------------
+volatile int  currentHour   = 0;
+volatile int  currentMinute = 0;
+volatile int  currentSecond = 0;
 
-// --- Alarm state ---
+// ---------------------------------------------------------------------------
+// Alarm state
+// ---------------------------------------------------------------------------
 volatile bool alarmActive = false;
 volatile bool snoozed     = false;
-int  snoozeHour, snoozeMinute;
+int snoozeHour, snoozeMinute;
 
-// --- FreeRTOS mutex ---
+// ---------------------------------------------------------------------------
+// FreeRTOS mutex
+// ---------------------------------------------------------------------------
 SemaphoreHandle_t stateMutex;
 
-// --- Notes ---
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
 #define NOTE_E5  659
 #define NOTE_D5  587
 #define NOTE_FS4 370
@@ -65,6 +95,8 @@ int nokiaDurations[] = {
 Preferences prefs;
 WebServer   server(80);
 
+// ---------------------------------------------------------------------------
+// Audio
 // ---------------------------------------------------------------------------
 
 void playBeep(int freq, int durationMs) {
@@ -102,12 +134,78 @@ void playBeepPattern() {
   vTaskDelay(pdMS_TO_TICKS(500));
 }
 
+// ---------------------------------------------------------------------------
+// Flask / LinUCB calls
+// ---------------------------------------------------------------------------
+
+int fetchStrategy() {
+  HTTPClient http;
+  http.begin(String(FLASK_IP) + "/select_strategy");
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(3000);
+
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+
+  char body[256];
+  snprintf(body, sizeof(body),
+    "{\"hour\":%d,\"day_of_week\":%d,\"sleep_hours\":%.1f,"
+    "\"minutes_until_class\":%.1f,\"semester_week\":%d,\"past_snooze_rate\":%.2f}",
+    currentHour, timeinfo.tm_wday,
+    sleepHours, minsUntilClass, semesterWeek, pastSnoozeRate);
+
+  int strategyIdx = 1;  // default NORMAL if request fails
+  int code = http.POST(body);
+  if (code == 200) {
+    String resp = http.getString();
+    int idx = -1;
+    sscanf(resp.c_str(), "{\"strategy_index\":%d", &idx);
+    if (idx >= 0 && idx <= 2) strategyIdx = idx;
+    Serial.printf(">>>Strategy selected: %d\n", strategyIdx);
+  } else {
+    Serial.printf(">>>fetchStrategy failed code=%d defaulting to 1\n", code);
+  }
+  http.end();
+  return strategyIdx;
+}
+
+void sendMorningResult(int strategyIdx, bool woke, float responseTimeSecs) {
+  HTTPClient http;
+  http.begin(String(FLASK_IP) + "/update_morning_result");
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(3000);
+
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+
+  char body[512];
+  snprintf(body, sizeof(body),
+    "{\"strategy_index\":%d,\"woke\":%s,\"snooze_count\":%d,"
+    "\"response_time_s\":%.1f,\"did_safety_override\":false,"
+    "\"context\":{\"hour\":%d,\"day_of_week\":%d,\"sleep_hours\":%.1f,"
+    "\"minutes_until_class\":%.1f,\"semester_week\":%d,\"past_snooze_rate\":%.2f}}",
+    strategyIdx, woke ? "true" : "false", snoozeCount, responseTimeSecs,
+    currentHour, timeinfo.tm_wday,
+    sleepHours, minsUntilClass, semesterWeek, pastSnoozeRate);
+
+  int code = http.POST(body);
+  Serial.printf(">>>Result sent: strategy=%d woke=%d snoozes=%d time=%.1fs code=%d\n",
+    strategyIdx, (int)woke, snoozeCount, responseTimeSecs, code);
+  http.end();
+}
+
+// ---------------------------------------------------------------------------
+// Snooze
+// ---------------------------------------------------------------------------
+
 void snooze() {
+  snoozeCount++;
+  pastSnoozeRate = min(1.0f, pastSnoozeRate + 0.1f);
+
   xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
   snoozed     = true;
   alarmActive = false;
   ledcWrite(0, 0);
-
   snoozeMinute = currentMinute + SNOOZE_MINS;
   snoozeHour   = currentHour;
   xSemaphoreGive(stateMutex);
@@ -121,6 +219,10 @@ void snooze() {
   vTaskDelay(pdMS_TO_TICKS(80));
   playBeep(1200, 100);
 }
+
+// ---------------------------------------------------------------------------
+// Display
+// ---------------------------------------------------------------------------
 
 void updateDisplay() {
   display.clearDisplay();
@@ -146,6 +248,10 @@ void updateDisplay() {
   display.display();
 }
 
+// ---------------------------------------------------------------------------
+// NVS
+// ---------------------------------------------------------------------------
+
 void loadAlarmSettings() {
   prefs.begin("alarm", false);
   alarmHour   = prefs.getInt("hour",     7);
@@ -162,7 +268,9 @@ void saveAlarmSettings() {
   prefs.end();
 }
 
-// --- HTTP handlers ---
+// ---------------------------------------------------------------------------
+// HTTP handlers
+// ---------------------------------------------------------------------------
 
 void handleRoot() {
   server.send(200, "text/plain", "Smart Clock API running.");
@@ -185,8 +293,8 @@ void handleSet() {
   alarmHour   = h;
   alarmMinute = m;
   ringtone    = r;
-  snoozed     = false;   // ADD THIS — clear snooze when new alarm is set
-  alarmActive = false;   // ADD THIS — clear any active alarm too
+  snoozed     = false;
+  alarmActive = false;
   xSemaphoreGive(stateMutex);
   saveAlarmSettings();
   server.send(200, "text/plain", "OK");
@@ -201,8 +309,21 @@ void handleStatus() {
   server.send(200, "application/json", json);
 }
 
+void handleDismiss() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  float responseTime = (millis() - alarmStartMs) / 1000.0f;
+  sendMorningResult(currentStrategy, true, responseTime);
+  snoozeCount    = 0;
+  pastSnoozeRate = max(0.0f, pastSnoozeRate - 0.05f);
+  xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
+  alarmActive = false;
+  xSemaphoreGive(stateMutex);
+  server.send(200, "text/plain", "OK");
+}
+
 // ---------------------------------------------------------------------------
 // FreeRTOS tasks
+// ---------------------------------------------------------------------------
 
 void displayTask(void* pvParameters) {
   for (;;) {
@@ -221,11 +342,8 @@ void alarmTask(void* pvParameters) {
     xSemaphoreGive(stateMutex);
 
     if (active) {
-      if (rt == 0) {
-        playMelody(nokiaMelody, nokiaDurations, 14);
-      } else {
-        playBeepPattern();
-      }
+      if (rt == 0) playMelody(nokiaMelody, nokiaDurations, 14);
+      else         playBeepPattern();
     } else {
       vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -235,7 +353,7 @@ void alarmTask(void* pvParameters) {
 void buttonTask(void* pvParameters) {
   for (;;) {
     if (digitalRead(BUTTON_PIN) == LOW) {
-      vTaskDelay(pdMS_TO_TICKS(50));  // debounce
+      vTaskDelay(pdMS_TO_TICKS(50));
       if (digitalRead(BUTTON_PIN) == LOW) {
         xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100));
         bool active = alarmActive;
@@ -267,10 +385,15 @@ void serverTask(void* pvParameters) {
                            && currentSecond == 0 && snoozed);
 
       if (isAlarmTime || isSnoozeTime) {
-        alarmActive = true;
-        snoozed     = false;
+        alarmActive  = true;
+        snoozed      = false;
+        alarmStartMs = millis();
+        xSemaphoreGive(stateMutex);
+        // fetchStrategy makes an HTTP call — must be outside mutex
+        currentStrategy = fetchStrategy();
+      } else {
+        xSemaphoreGive(stateMutex);
       }
-      xSemaphoreGive(stateMutex);
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -278,12 +401,15 @@ void serverTask(void* pvParameters) {
 }
 
 // ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 void setup() {
   Serial.begin(115200);
-  esp_log_level_set("*", ESP_LOG_NONE);
-  esp_log_level_set("wifi", ESP_LOG_NONE);  // add this
+  esp_log_level_set("*",    ESP_LOG_NONE);
+  esp_log_level_set("wifi", ESP_LOG_NONE);
   Serial.println(">>>Boot OK");
+
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   ledcSetup(0, 1000, 8);
   ledcAttachPin(BUZZER_PIN, 0);
@@ -291,24 +417,16 @@ void setup() {
 
   stateMutex = xSemaphoreCreateMutex();
 
-
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) while (1);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-
-  // Show connecting screen
   display.setTextSize(2);
   display.setCursor(0, 24);
   display.print("Connecting...");
   display.display();
 
-  // Connect to WiFi via WiFiManager
-  // On first boot (or after reset): creates AP "SmartClock-Setup" for config.
-  // On subsequent boots: reconnects automatically using saved credentials.
   WiFiManager wm;
-  wm.setConfigPortalTimeout(180);  // give up portal after 3 min if no one connects
-
-  // Show AP instructions on OLED while in config portal
+  wm.setConfigPortalTimeout(180);
   wm.setAPCallback([](WiFiManager*) {
     display.clearDisplay();
     display.setTextSize(1);
@@ -324,7 +442,7 @@ void setup() {
     display.display();
   });
 
-  //wm.resetSettings();
+  // wm.resetSettings();  // uncomment only to force re-setup
   if (!wm.autoConnect("SmartClock-Setup")) {
     Serial.println(">>>WiFi failed — restarting");
     ESP.restart();
@@ -342,7 +460,6 @@ void setup() {
   display.display();
   delay(2000);
 
-  // Sync time via NTP
   configTime(GMT_OFFSET_SEC, DST_OFFSET_SEC, NTP_SERVER);
   struct tm timeinfo;
   int ntpRetries = 0;
@@ -351,19 +468,23 @@ void setup() {
     ntpRetries++;
   }
 
-  // Load alarm settings from NVS
   loadAlarmSettings();
 
-  // Start HTTP server
-  server.on("/",       HTTP_GET, handleRoot);
-  server.on("/set",    HTTP_GET, handleSet);
-  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/",        HTTP_GET,     handleRoot);
+  server.on("/set",     HTTP_GET,     handleSet);
+  server.on("/status",  HTTP_GET,     handleStatus);
+  server.on("/dismiss", HTTP_GET,     handleDismiss);
   server.on("/set", HTTP_OPTIONS, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     server.send(204);
   });
   server.on("/status", HTTP_OPTIONS, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    server.send(204);
+  });
+  server.on("/dismiss", HTTP_OPTIONS, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     server.send(204);
@@ -375,6 +496,10 @@ void setup() {
   xTaskCreatePinnedToCore(alarmTask,   "Alarm",   4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(buttonTask,  "Button",  1024, NULL, 3, NULL, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
 
 void loop() {
   vTaskDelay(pdMS_TO_TICKS(1000));
