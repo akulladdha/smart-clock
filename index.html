@@ -467,7 +467,8 @@
     if (isNaN(h) || h < 0 || h > 23) { toast('Hour must be 0–23', 'err'); return; }
     if (isNaN(m) || m < 0 || m > 59) { toast('Minute must be 0–59', 'err'); return; }
     try {
-      const r = await fetch(`${ESP}/set?hour=${h}&minute=${m}&strategy=${selectedStrategy}`);
+      const ringtone = selectedStrategy === 0 ? 0 : 1;
+      const r = await fetch(`${ESP}/set?hour=${h}&minute=${m}&ringtone=${ringtone}`);
       if (r.ok) {
         toast('Alarm set', 'ok');
         document.getElementById('alarm-set-display').textContent =
