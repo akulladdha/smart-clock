@@ -8,6 +8,7 @@
 #include <WiFiClientSecure.h>
 #include "secrets.h"
 #include <WebServer.h>
+#include "tapoAPI/tapo_device.h"
 
 
 // ---------------------------------------------------------------------------
@@ -22,8 +23,7 @@
 #define SNOOZE_BTN      18
 #define CONFIRM_BTN     19
 #define SLIDEPOT_PIN    32   // ADC1 channel 4, 12-bit (0-4095)
-
-
+#define TAPO_BTN 4
 
 // ---------------------------------------------------------------------------
 // OLED
@@ -70,6 +70,10 @@ const unsigned long DEBOUNCE_MS = 50;
 
 WebServer server(80);
 
+TapoDevice bulb;
+bool bulbOn = false;
+bool bulbReady = false;
+
 bool alarmActive = false;
 int  snoozeCount = 0;
 
@@ -83,8 +87,7 @@ struct Button {
 
 Button snoozeBtn  = { SNOOZE_BTN,  HIGH, HIGH, 0, false };
 Button confirmBtn = { CONFIRM_BTN, HIGH, HIGH, 0, false };
-
-
+Button tapoBtn = { TAPO_BTN, HIGH, HIGH, 0, false };
 
 void makeWakeUpCall() {
     WiFiClientSecure client;
@@ -647,6 +650,9 @@ if (!wm.autoConnect("RiseIQ")) {
     server.on("/snooze",  HTTP_GET, handleSnooze);
     server.on("/escalate", HTTP_GET, handleEscalate);
     server.begin();
+    pinMode(TAPO_BTN, INPUT_PULLUP);
+    bulbReady = bulb.begin(TAPO_BULB_IP, TAPO_USER, TAPO_PASS);
+    Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
 
@@ -678,6 +684,12 @@ void loop() {
   // ---- Read buttons ---------------------------------------------------------
   updateButton(snoozeBtn);
   updateButton(confirmBtn);
+  updateButton(tapoBtn);
+  if (tapoBtn.pressed && bulbReady) {
+    bulbOn = !bulbOn;
+    if (bulbOn) bulb.on();
+    else        bulb.off();
+  }
 
   // ---- Continuous slidepot reads for SET screens ----------------------------
   if (state == SET_HOUR)   tempHour   = slidepotMap(0, 23);
