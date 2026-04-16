@@ -23,8 +23,8 @@
 
 #define TWILIO_ACCOUNT_SID  "YOUR_ACCOUNT_SID"
 #define TWILIO_AUTH_TOKEN   "YOUR_AUTH_TOKEN"
-#define TWILIO_FROM         "+12182154457"  // your Twilio number
-#define CALL_TO             "+17325270427"  // your real phone number
+#define TWILIO_FROM         "YOUR_TWILIO_NUMBER"
+#define CALL_TO             "YOUR_PHONE_NUMBER"
 
 // ---------------------------------------------------------------------------
 // OLED
