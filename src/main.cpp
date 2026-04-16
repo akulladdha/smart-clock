@@ -98,12 +98,13 @@ void makeWakeUpCall() {
     http.setAuthorization(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   
-    String body = "To=%2B" + String(CALL_TO).substring(1)
-            + "&From=%2B" + String(TWILIO_FROM).substring(1)
-            + "&Url=http://demo.twilio.com/docs/voice.xml";
+    String body = "To=%2B14694066614"
+    "&From=%2B17325270427"
+    "&Url=http://demo.twilio.com/docs/voice.xml";
   
     int code = http.POST(body);
     Serial.printf("Twilio response: %d\n", code);
+    Serial.printf("Twilio message: %d\n", http.getString());
     http.end();
   }
 
@@ -258,172 +259,169 @@ void stopDemo() {
 }
 
 void renderDisplay() {
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-  
-    switch (state) {
-  
-      // ---- HOME ---------------------------------------------------------------
-      case HOME: {
-        // Time centered, large
-        display.setTextSize(3);
-        char timeBuf[6];
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", curHour, curMinute);
-        int timeX = (128 - (5 * 18)) / 2;  // center 5 chars at size 3 (18px each)
-        display.setCursor(timeX, 4);
-        display.print(timeBuf);
-  
-        // Seconds on its own line, smaller, right-aligned
-        display.setTextSize(1);
-        char secBuf[4];
-        snprintf(secBuf, sizeof(secBuf), ":%02d", curSecond);
-        display.setCursor(104, 30);
-        display.print(secBuf);
-  
-        // Divider
-        display.drawFastHLine(0, 40, 128, SSD1306_WHITE);
-  
-        // Alarm line
-        display.setTextSize(1);
-        display.setCursor(0, 45);
-        display.printf("Alarm: %02d:%02d", alarmHour, alarmMinute);
-  
-        // Hints right-aligned
-        display.setCursor(72, 45);
-        display.print(" SET");
-        display.setCursor(66, 55);
-        //display.print("DEMO");
-        display.setCursor(72, 45);
-  
-        // Two hint labels bottom right
-        display.setCursor(0, 55);
-        display.print("CNF=set  SNZ=demo");
-        break;
-      }
-  
-      // ---- SET ALARM HOUR -----------------------------------------------------
-      case SET_HOUR: {
-        display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.print("-- SET ALARM --");
-        display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
-  
-        display.setCursor(0, 16);
-        display.print("HOUR");
-  
-        display.setTextSize(4);
-        char buf[3];
-        snprintf(buf, sizeof(buf), "%02d", tempHour);
-        display.setCursor(44, 22);
-        display.print(buf);
-  
-        display.setTextSize(1);
-        display.setCursor(0, 56);
-        display.print("Slide  |  CNF to next");
-        break;
-      }
-  
-      // ---- SET ALARM MINUTE ---------------------------------------------------
-      case SET_MINUTE: {
-        display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.print("-- SET ALARM --");
-        display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
-  
-        display.setCursor(0, 16);
-        display.print("MINUTE");
-  
-        display.setTextSize(4);
-        char buf[3];
-        snprintf(buf, sizeof(buf), "%02d", tempMinute);
-        display.setCursor(44, 22);
-        display.print(buf);
-  
-        display.setTextSize(1);
-        display.setCursor(0, 56);
-        display.print("Slide  |  CNF to save");
-        break;
-      }
-  
-      // ---- DEMO ---------------------------------------------------------------
-      case DEMO: {
-        display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.print("-- DEMO MODE --");
-        display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
-  
-        const char* labels[3] = { "1: Ringtone", "2: Buzzer", "3: Calling..." };
-        int yPos[3] = { 16, 30, 44 };
-  
-        for (int i = 0; i < 3; i++) {
-          if (i == demoSel) {
-            display.fillRect(0, yPos[i] - 1, 128, 11, SSD1306_WHITE);
-            display.setTextColor(SSD1306_BLACK);
-          } else {
-            display.setTextColor(SSD1306_WHITE);
-          }
-          display.setCursor(4, yPos[i]);
-          display.print(labels[i]);
-        }
-  
-        display.setTextColor(SSD1306_WHITE);
-        display.setCursor(0, 56);
-        display.print("CNF=run  SNZ=back");
-        break;
-      }
-  
-      // ---- ALARM RINGING ------------------------------------------------------
-      case ALARM_RINGING: {
-        // Flashing header
-        if ((millis() / 500) % 2 == 0) {
-          display.fillRect(0, 0, 128, 14, SSD1306_WHITE);
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  switch (state) {
+
+    case HOME: {
+      int dispHour = curHour % 12;
+      if (dispHour == 0) dispHour = 12;
+      const char* ampm = (curHour < 12) ? "AM" : "PM";
+      
+      display.setTextSize(3);
+      char timeBuf[6];
+      snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", dispHour, curMinute);
+      int timeX = (128 - (5 * 18)) / 2;
+      display.setCursor(timeX, 4);
+      display.print(timeBuf);
+      
+      display.setTextSize(1);
+      char secBuf[4];
+      snprintf(secBuf, sizeof(secBuf), ":%02d", curSecond);
+      display.setCursor(110, 12);
+      display.print(secBuf);
+      
+      display.setTextSize(1);
+      display.setCursor(114, 4);
+      display.print(ampm);
+
+      display.drawFastHLine(0, 40, 128, SSD1306_WHITE);
+
+      display.setTextSize(1);
+      display.setCursor(0, 45);
+      int aDisp = alarmHour % 12;
+      if (aDisp == 0) aDisp = 12;
+      display.printf("Alarm: %02d:%02d %s", aDisp, alarmMinute, alarmHour < 12 ? "AM" : "PM");
+
+      display.setCursor(0, 55);
+      display.print("CNF=set  SNZ=demo");
+      break;
+    }
+
+    case SET_HOUR: {
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("-- SET ALARM --");
+      display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
+
+      display.setCursor(0, 16);
+      display.print("HOUR");
+
+      // AM/PM indicator
+      display.setCursor(90, 16);
+      display.print(tempHour < 12 ? "AM" : "PM");
+
+      display.setTextSize(4);
+      char buf[3];
+      snprintf(buf, sizeof(buf), "%02d", tempHour==12 ? 12 : tempHour%12);
+      
+      display.setCursor(44, 22);
+      display.print(buf);
+
+      display.setTextSize(1);
+      display.setCursor(0, 56);
+      display.print("Slide  |  CNF to next");
+      break;
+    }
+
+    case SET_MINUTE: {
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("-- SET ALARM --");
+      display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
+
+      display.setCursor(0, 16);
+      display.print("MINUTE");
+
+      display.setTextSize(4);
+      char buf[3];
+      snprintf(buf, sizeof(buf), "%02d", tempMinute);
+      display.setCursor(44, 22);
+      display.print(buf);
+
+      display.setTextSize(1);
+      display.setCursor(0, 56);
+      display.print("Slide  |  CNF to save");
+      break;
+    }
+
+    case DEMO: {
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("-- DEMO MODE --");
+      display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
+
+      const char* labels[3] = { "1: Ringtone", "2: Buzzer", "3: Calling..." };
+      int yPos[3] = { 16, 30, 44 };
+
+      for (int i = 0; i < 3; i++) {
+        if (i == demoSel) {
+          display.fillRect(0, yPos[i] - 1, 128, 11, SSD1306_WHITE);
           display.setTextColor(SSD1306_BLACK);
         } else {
           display.setTextColor(SSD1306_WHITE);
         }
-        display.setTextSize(1);
-        display.setCursor(34, 3);
-        display.print("!! ALARM !!");
-        display.setTextColor(SSD1306_WHITE);
-  
-        display.drawFastHLine(0, 14, 128, SSD1306_WHITE);
-  
-        display.setTextSize(2);
-        display.setCursor(0, 18);
-        if      (escMode == 1) display.print("Ringtone");
-        else if (escMode == 2) display.print("Buzzer");
-        else                   display.print("Calling..");
-  
-        // Escalation progress bar
-        unsigned long elapsed = millis() - alarmStartMs;
-        int progress = (int)((float)elapsed / ESC_3_MS * 128);
-        if (progress > 128) progress = 128;
-        display.drawRect(0, 38, 128, 6, SSD1306_WHITE);
-        display.fillRect(0, 38, progress, 6, SSD1306_WHITE);
-  
-        display.setTextSize(1);
-        display.setCursor(0, 48);
-        display.printf("%02d:%02d", curHour, curMinute);
-        display.setCursor(50, 48);
-        display.print("SNZ+5m CNF=off");
-        break;
+        display.setCursor(4, yPos[i]);
+        display.print(labels[i]);
       }
-  
-      // ---- SNOOZED ------------------------------------------------------------
-      case SNOOZED: {
-        display.drawRoundRect(10, 15, 108, 34, 4, SSD1306_WHITE);
-        display.setTextSize(2);
-        display.setCursor(18, 20);
-        display.print("Snoozed");
-        display.setTextSize(1);
-        display.setCursor(38, 44);
-        display.print("+5 min");
-        break;
-      }
+
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 56);
+      display.print("CNF=run  SNZ=back");
+      break;
     }
-  
-    display.display();
+
+    case ALARM_RINGING: {
+      if ((millis() / 500) % 2 == 0) {
+        display.fillRect(0, 0, 128, 14, SSD1306_WHITE);
+        display.setTextColor(SSD1306_BLACK);
+      } else {
+        display.setTextColor(SSD1306_WHITE);
+      }
+      display.setTextSize(1);
+      display.setCursor(34, 3);
+      display.print("!! ALARM !!");
+      display.setTextColor(SSD1306_WHITE);
+
+      display.drawFastHLine(0, 14, 128, SSD1306_WHITE);
+
+      display.setTextSize(2);
+      display.setCursor(0, 18);
+      if      (escMode == 1) display.print("Ringtone");
+      else if (escMode == 2) display.print("Buzzer");
+      else                   display.print("Calling..");
+
+      unsigned long elapsed = millis() - alarmStartMs;
+      int progress = (int)((float)elapsed / ESC_3_MS * 128);
+      if (progress > 128) progress = 128;
+      display.drawRect(0, 38, 128, 6, SSD1306_WHITE);
+      display.fillRect(0, 38, progress, 6, SSD1306_WHITE);
+
+      display.setTextSize(1);
+      display.setCursor(0, 48);
+      int aHour = curHour % 12;
+      if (aHour == 0) aHour = 12;
+      display.printf("%02d:%02d %s", aHour, curMinute, curHour < 12 ? "AM" : "PM");
+      display.setCursor(50, 48);
+      display.print("SNZ+5m CNF=off");
+      break;
+    }
+
+    case SNOOZED: {
+      display.drawRoundRect(10, 15, 108, 34, 4, SSD1306_WHITE);
+      display.setTextSize(2);
+      display.setCursor(18, 20);
+      display.print("Snoozed");
+      display.setTextSize(1);
+      display.setCursor(38, 44);
+      display.print("+5 min");
+      break;
+    }
   }
+
+  display.display();
+}
 
 // ---------------------------------------------------------------------------
 // NTP sync — called once on boot and can be recalled on reconnect
@@ -461,7 +459,6 @@ void handleButtons() {
       break;
 
     case SET_HOUR:
-      // Slidepot scrubs 0-23 continuously (read in loop)
       if (cnf) {
         state = SET_MINUTE;
         tempMinute = alarmMinute;
@@ -469,7 +466,6 @@ void handleButtons() {
       break;
 
     case SET_MINUTE:
-      // Slidepot scrubs 0-59 continuously (read in loop)
       if (cnf) {
         alarmHour   = tempHour;
         alarmMinute = tempMinute;
@@ -483,18 +479,16 @@ void handleButtons() {
         state = HOME;
       } else if (cnf) {
         stopDemo();
-        demoActiveMode = demoSel + 1;  // 1,2,3
+        demoActiveMode = demoSel + 1;
         demoActive     = true;
         if (demoActiveMode == 1) {
           beepOn       = false;
           beepToggleMs = 0;
         } else if (demoActiveMode == 2) {
           digitalWrite(ACTIVE_BUZZER, HIGH);
-        }
-        else if(demoActiveMode==3){
+        } else if (demoActiveMode == 3) {
           makeWakeUpCall();
         }
-        // mode 3: just shows "Calling..." text (handled in renderDisplay)
       }
       break;
 
@@ -503,12 +497,13 @@ void handleButtons() {
         doSnooze();
       } else if (cnf) {
         stopAllBuzzers();
-        state = HOME;
+        alarmActive = false;
+        snoozeCount = 0;
+        state       = HOME;
       }
       break;
 
     case SNOOZED:
-      // Auto-transitions in loop after 2 s; no button action needed
       break;
   }
 }
@@ -560,6 +555,23 @@ void handleSnooze() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   doSnooze();
   //snoozeCount++;
+  server.send(200, "text/plain", "OK");
+}
+void handleEscalate() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (!server.hasArg("mode")) {
+    server.send(400, "text/plain", "Missing mode"); return;
+  }
+  int mode = server.arg("mode").toInt();
+  if (mode < 1 || mode > 3) {
+    server.send(400, "text/plain", "Mode must be 1-3"); return;
+  }
+  stopAllBuzzers();
+  escMode      = mode;
+  alarmStartMs = millis() - (mode == 2 ? ESC_2_MS : mode == 3 ? ESC_3_MS : 0);
+  alarmActive  = true;
+  state        = ALARM_RINGING;
+  if (mode == 3) makeWakeUpCall();
   server.send(200, "text/plain", "OK");
 }
 
@@ -633,6 +645,7 @@ if (!wm.autoConnect("RiseIQ")) {
     server.on("/dismiss", HTTP_GET, handleDismiss);
     server.on("/trigger", HTTP_GET, handleTrigger);
     server.on("/snooze",  HTTP_GET, handleSnooze);
+    server.on("/escalate", HTTP_GET, handleEscalate);
     server.begin();
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());

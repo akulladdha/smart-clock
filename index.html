@@ -489,7 +489,10 @@
 
     <div class="clock-block">
       <div class="clock-label">Current Time</div>
-      <div class="clock-time" id="live-clock">--:--</div>
+      <div style="display:flex;align-items:flex-end;gap:10px;">
+        <div class="clock-time" id="live-clock">--:--</div>
+        <div style="font-family:var(--display);font-size:1.2rem;font-weight:700;color:var(--sub);padding-bottom:8px;letter-spacing:0.1em;" id="live-ampm"></div>
+      </div>
       <div class="clock-date" id="live-date">---</div>
 
       <div class="alarm-readout">
@@ -568,10 +571,25 @@
     </div>
 
     <!-- Demo / trigger -->
-    <div class="section">
-      <span class="section-tag">Demo</span>
-      <button class="btn btn-danger" onclick="triggerAlarm()">▶ Fire Alarm Now</button>
+<div class="section">
+  <span class="section-tag">Demo</span>
+  <div class="esc-track" style="margin-bottom:12px;">
+    <div class="esc-step" id="demo-1" onclick="triggerMode(1)" style="cursor:pointer;">
+      <span class="esc-icon">🔔</span>
+      <span class="esc-name">Ringtone</span>
     </div>
+    <div class="esc-step" id="demo-2" onclick="triggerMode(2)" style="cursor:pointer;">
+      <span class="esc-icon">📢</span>
+      <span class="esc-name">Buzzer</span>
+    </div>
+    <div class="esc-step" id="demo-3" onclick="triggerMode(3)" style="cursor:pointer;">
+      <span class="esc-icon">📞</span>
+      <span class="esc-name">Calling</span>
+    </div>
+  </div>
+  <button class="btn btn-danger" onclick="triggerAlarm()">▶ Fire Full Sequence</button>
+  <div class="toast" id="demo-toast" style="margin-top:8px;"></div>
+</div>
 
     <!-- IP config -->
     <div class="section">
@@ -607,11 +625,15 @@
   const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+  // replace tickClock with:
   function tickClock() {
     const now = new Date();
-    const h = String(now.getHours()).padStart(2,'0');
+    let h = now.getHours();
     const m = String(now.getMinutes()).padStart(2,'0');
-    document.getElementById('live-clock').textContent = `${h}:${m}`;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    document.getElementById('live-clock').textContent = `${String(h).padStart(2,'0')}:${m}`;
+    document.getElementById('live-ampm').textContent  = ampm;
     document.getElementById('live-date').textContent  =
       `${DAYS[now.getDay()]}  ${MONTHS[now.getMonth()]} ${now.getDate()}`;
   }
@@ -666,7 +688,10 @@
       // Alarm time
       const h = String(d.hour).padStart(2,'0');
       const m = String(d.minute).padStart(2,'0');
-      document.getElementById('alarm-display').textContent = `${h}:${m}`;
+      const ampmA = d.hour >= 12 ? 'PM' : 'AM';
+      const h12   = d.hour % 12 || 12;
+      document.getElementById('alarm-display').textContent =
+        `${String(h12).padStart(2,'0')}:${m} ${ampmA}`;
 
       // Pre-fill inputs if empty
       if (!document.getElementById('hour').value)   document.getElementById('hour').value   = d.hour;
@@ -702,7 +727,10 @@
       if (r.ok) {
         const ph = String(h).padStart(2,'0');
         const pm = String(m).padStart(2,'0');
-        document.getElementById('alarm-display').textContent = `${ph}:${pm}`;
+        const ampmS = h >= 12 ? 'PM' : 'AM';
+        const h12s  = h % 12 || 12;
+        document.getElementById('alarm-display').textContent =
+          `${String(h12s).padStart(2,'0')}:${pm} ${ampmS}`;
         document.getElementById('status-pill').className = 'status-pill armed';
         document.getElementById('status-text').textContent = 'Armed';
         toast(`Alarm set for ${ph}:${pm}`, 'ok');
@@ -744,6 +772,26 @@
       setTimeout(pollStatus, 600);
     } catch (_) { toast('Cannot reach ESP32', 'err'); }
   }
+  async function triggerMode(mode) {
+  if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
+  // Highlight selected
+  [1,2,3].forEach(i => {
+    document.getElementById(`demo-${i}`).className =
+      'esc-step' + (i === mode ? ` active-${mode}` : '');
+  });
+  try {
+    await fetch(`${ESP}/escalate?mode=${mode}`);
+    const labels = ['', 'Ringtone fired', 'Buzzer fired', 'Calling now...'];
+    const demoToast = document.getElementById('demo-toast');
+    demoToast.textContent = labels[mode];
+    demoToast.className = 'toast ok';
+    setTimeout(() => { demoToast.textContent = ''; demoToast.className = 'toast'; }, 3000);
+    setTimeout(pollStatus, 600);
+  } catch (_) {
+    document.getElementById('demo-toast').textContent = 'Cannot reach ESP32';
+    document.getElementById('demo-toast').className = 'toast err';
+  }
+}
 
   // ---- Init ----
   if (ESP) pollStatus();
