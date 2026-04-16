@@ -56,8 +56,6 @@ class AlarmUARTInterface:
             if code == CODE_READY:
                 print("[UART] ESP32 READY received.")
                 return
-            else:
-                printf(code)
 
     def dispatch_sequence(self, ctx: AlarmContext) -> int:
         arm = self.bandit.select_arm(ctx)
