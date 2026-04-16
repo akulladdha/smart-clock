@@ -7,3 +7,4 @@
 /logic/.venv/*
 .DS_Store
 config.env
+/src/secrets.h

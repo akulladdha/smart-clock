@@ -6,6 +6,8 @@
 #include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include "secrets.h"
+#include <WebServer.h>
 
 
 // ---------------------------------------------------------------------------
@@ -21,10 +23,7 @@
 #define CONFIRM_BTN     19
 #define SLIDEPOT_PIN    32   // ADC1 channel 4, 12-bit (0-4095)
 
-#define TWILIO_ACCOUNT_SID  "YOUR_ACCOUNT_SID"
-#define TWILIO_AUTH_TOKEN   "YOUR_AUTH_TOKEN"
-#define TWILIO_FROM         "YOUR_TWILIO_NUMBER"
-#define CALL_TO             "YOUR_PHONE_NUMBER"
+
 
 // ---------------------------------------------------------------------------
 // OLED
@@ -69,6 +68,11 @@ int tempMinute = 0;
 // ---------------------------------------------------------------------------
 const unsigned long DEBOUNCE_MS = 50;
 
+WebServer server(80);
+
+bool alarmActive = false;
+int  snoozeCount = 0;
+
 struct Button {
   int           pin;
   bool          lastRaw;        // last sampled GPIO level
@@ -94,9 +98,9 @@ void makeWakeUpCall() {
     http.setAuthorization(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   
-    String body = "To=%2B14694066614"
-                  "&From=%2B17325270427"
-                  "&Url=http://demo.twilio.com/docs/voice.xml";
+    String body = "To=%2B" + String(CALL_TO).substring(1)
+            + "&From=%2B" + String(TWILIO_FROM).substring(1)
+            + "&Url=http://demo.twilio.com/docs/voice.xml";
   
     int code = http.POST(body);
     Serial.printf("Twilio response: %d\n", code);
@@ -233,6 +237,7 @@ unsigned long snoozeShowMs = 0;
 
 void doSnooze() {
   stopAllBuzzers();
+  snoozeCount++;
   alarmMinute += 5;
   if (alarmMinute >= 60) { alarmMinute -= 60; alarmHour = (alarmHour + 1) % 24; }
   state        = SNOOZED;
@@ -508,11 +513,62 @@ void handleButtons() {
   }
 }
 
+
+
+void handleStatus() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  char json[128];
+  snprintf(json, sizeof(json),
+    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d}",
+    alarmHour, alarmMinute,
+    (state == ALARM_RINGING) ? "true" : "false",
+    escMode, snoozeCount);
+  server.send(200, "application/json", json);
+}
+
+void handleSet() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (!server.hasArg("hour") || !server.hasArg("minute")) {
+    server.send(400, "text/plain", "Missing params"); return;
+  }
+  alarmHour   = server.arg("hour").toInt();
+  alarmMinute = server.arg("minute").toInt();
+  server.send(200, "text/plain", "OK");
+}
+
+void handleDismiss() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  stopAllBuzzers();
+  alarmActive = false;
+  snoozeCount = 0;
+  state       = HOME;
+  server.send(200, "text/plain", "OK");
+}
+
+void handleTrigger() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  alarmStartMs = millis();
+  escMode      = 1;
+  beepOn       = false;
+  beepToggleMs = 0;
+  alarmActive  = true;
+  state        = ALARM_RINGING;
+  server.send(200, "text/plain", "OK");
+}
+
+void handleSnooze() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  doSnooze();
+  //snoozeCount++;
+  server.send(200, "text/plain", "OK");
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
+  Serial.println(WiFi.macAddress());
 
   // Hardware init
   pinMode(ACTIVE_BUZZER, OUTPUT);
@@ -568,8 +624,27 @@ if (!wm.autoConnect("RiseIQ")) {
     display.setCursor(0, 20);
     display.print("WiFi OK");
     display.display();
+    Serial.println(WiFi.macAddress());
     delay(1000);
     syncNTP();
+
+    server.on("/status",  HTTP_GET, handleStatus);
+    server.on("/set",     HTTP_GET, handleSet);
+    server.on("/dismiss", HTTP_GET, handleDismiss);
+    server.on("/trigger", HTTP_GET, handleTrigger);
+    server.on("/snooze",  HTTP_GET, handleSnooze);
+    server.begin();
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(0, 20);
+    display.print("IP:");
+    display.setCursor(0, 36);
+    display.print(WiFi.localIP().toString());
+    display.display();
+    delay(3000);
 }
 }
 
@@ -577,6 +652,7 @@ if (!wm.autoConnect("RiseIQ")) {
 // Loop
 // ---------------------------------------------------------------------------
 void loop() {
+  server.handleClient();
   // ---- Update current time --------------------------------------------------
   struct tm t;
   if (getLocalTime(&t)) {
@@ -605,6 +681,7 @@ void loop() {
     escMode      = 1;
     beepOn       = false;
     beepToggleMs = 0;
+    alarmActive = true;
     state        = ALARM_RINGING;
   }
 
