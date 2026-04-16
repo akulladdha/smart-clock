@@ -13,7 +13,7 @@ if __name__ == "__main__":
         past_snooze_rate=0.4
     )
 
-    interface = AlarmUARTInterface(bandit, port="/dev/serial0", baud=115200)
+    interface = AlarmUARTInterface(bandit, port="/dev/ttyAMA3", baud=9600)
     interface.run_alarm_cycle(ctx)
 
     # After ACK, shut down RPi — ESP will cut power via MOSFET
