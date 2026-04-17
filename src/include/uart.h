@@ -1,4 +1,7 @@
+#pragma once
+#include <Arduino.h>
 #include <cstdint>
+
 // ---------------------------------------------------------------------------
 // Protocol constants — must match Python exactly
 // ---------------------------------------------------------------------------
@@ -18,9 +21,9 @@
 // UART config
 // ---------------------------------------------------------------------------
 #define RPI_UART         Serial2
-#define RPI_UART_BAUD    115200
-#define RPI_TX           17
-#define RPI_RX           16
+#define RPI_UART_BAUD    9600
+#define RPI_TX           4
+#define RPI_RX           2
 
 // ---------------------------------------------------------------------------
 // Strategy type
@@ -33,15 +36,29 @@ typedef enum {
 } Strategy;
 
 // ---------------------------------------------------------------------------
-// Outcome struct — filled during alarm execution, sent back to RPi
+// Outcome struct
 // ---------------------------------------------------------------------------
 typedef struct {
-    bool    woke;
-    uint8_t snooze_count;
+    bool     woke;
+    uint8_t  snooze_count;
     uint16_t response_time_s;
-    bool    safety_override;
+    bool     safety_override;
 } WakeOutcome;
 
 // ---------------------------------------------------------------------------
-// UART helpers
+// RPiUART class — declarations only
 // ---------------------------------------------------------------------------
+class RPiUART {
+public:
+    void     begin();
+    void     send_ready();
+    Strategy recv_strategy();
+    void     send_wake_report(WakeOutcome &out);
+    void     wait_for_ack();
+
+private:
+    void    send_byte(uint8_t b);
+    void    send_frame(uint8_t code);
+    uint8_t recv_byte();
+    void    wait_for_start();
+};

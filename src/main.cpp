@@ -9,7 +9,45 @@
 #include "secrets.h"
 #include <WebServer.h>
 
+//!Test communication that works
+/* 
+RPiUART rpi;
 
+void setup() {
+    Serial.begin(9600);
+    rpi.begin();
+    delayMicroseconds(10000000);
+    Serial.println("[BOOT] ESP32 starting...");
+    delayMicroseconds(1000000);
+    Serial.println("[BOOT] Starting cycle...");
+    // Step 1: Tell Pi we are ready
+    rpi.send_ready();
+
+    // Step 2: Block until Pi sends a strategy
+    Strategy strategy = rpi.recv_strategy();
+    switch (strategy) {
+        case STRAT_GENTLE:  Serial.println("[MAIN] Strategy: GENTLE");  break;
+        case STRAT_NORMAL:  Serial.println("[MAIN] Strategy: NORMAL");  break;
+        case STRAT_NUCLEAR: Serial.println("[MAIN] Strategy: NUCLEAR"); break;
+        default:            Serial.println("[MAIN] Strategy: UNKNOWN"); break;
+    }
+    // Step 3: Build dummy wake report
+    WakeOutcome outcome = {
+        .woke             = true,
+        .snooze_count     = 1,
+        .response_time_s  = 300,   // 5 minutes in seconds
+        .safety_override  = false
+    };
+
+    // Step 4: Send wake report back to Pi
+    rpi.send_wake_report(outcome);
+
+    // Step 5: Block until Pi ACKs
+    rpi.wait_for_ack();
+
+    Serial.println("[MAIN] Cycle complete.");
+}
+*/
 // ---------------------------------------------------------------------------
 // Hardware pins
 // ---------------------------------------------------------------------------
