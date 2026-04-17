@@ -651,7 +651,7 @@ if (!wm.autoConnect("RiseIQ")) {
     server.on("/escalate", HTTP_GET, handleEscalate);
     server.begin();
     pinMode(TAPO_BTN, INPUT_PULLUP);
-    bulbReady = bulb.begin(TAPO_BULB_IP, TAPO_USER, TAPO_PASS);
+    bulbReady = bulb.begin("10.159.64.202", "akul.laddha@gmail.com", "water1234");
     Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
