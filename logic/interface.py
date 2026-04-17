@@ -94,7 +94,6 @@ class AlarmUARTInterface:
 
     def run_alarm_cycle(self, ctx: AlarmContext):
         self.wait_for_ready() #blocks until ESP ready
-
         arm = self.dispatch_sequence(ctx)
 
         report = self.receive_report()
