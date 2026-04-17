@@ -11,7 +11,7 @@
 #include "tapoAPI/tapo_device.h"
 
 //!Test communication that works
-/* 
+/*
 RPiUART rpi;
 
 void setup() {
@@ -125,13 +125,39 @@ struct Button {
 
 Button snoozeBtn  = { SNOOZE_BTN,  HIGH, HIGH, 0, false };
 Button confirmBtn = { CONFIRM_BTN, HIGH, HIGH, 0, false };
-Button tapoBtn = { TAPO_BTN, HIGH, HIGH, 0, false };
+Button tapoBtn    = { TAPO_BTN,    HIGH, HIGH, 0, false };
 
+// ---------------------------------------------------------------------------
 // Sunrise state
-bool     sunriseActive   = false;
-unsigned long sunriseStartMs = 0;
+// ---------------------------------------------------------------------------
+bool          sunriseActive   = false;
+unsigned long sunriseStartMs  = 0;
 const unsigned long SUNRISE_DURATION_MS = 30000; // 30 seconds
 
+// ---------------------------------------------------------------------------
+// Strategy tracking
+// ---------------------------------------------------------------------------
+enum Strategy { STRAT_GENTLE, STRAT_NORMAL, STRAT_NUCLEAR };
+Strategy currentStrategy = STRAT_NORMAL;
+bool sunriseFiredThisAlarm = false; // prevents sunrise replaying after snooze
+
+// Strobe state (non-blocking, for NORMAL and NUCLEAR)
+bool          strobeOn        = false;
+unsigned long strobeToggleMs  = 0;
+const unsigned long STROBE_INTERVAL_MS = 2500; // Tapo bulb needs ~2-3s between commands
+int           strobeBrightness = 50; // 50 for NORMAL, 100 for NUCLEAR
+
+// Demo modality state
+bool          demoModalityActive   = false;
+Strategy      demoModalityStrategy = STRAT_NORMAL;
+bool          demoSunriseDone      = false; // tracks if demo sunrise finished
+
+// Nuclear call tracking
+bool nuclearCallMade = false;
+
+// ---------------------------------------------------------------------------
+// Sunrise tick and start
+// ---------------------------------------------------------------------------
 void tickSunrise() {
   if (!sunriseActive || !bulbReady) return;
 
@@ -218,28 +244,34 @@ void startSunrise() {
   Serial.println("Sunrise started");
 }
 
+// ---------------------------------------------------------------------------
+// Twilio wake-up call
+// ---------------------------------------------------------------------------
 void makeWakeUpCall() {
     WiFiClientSecure client;
     client.setInsecure();
-  
+
     HTTPClient http;
     String url = String("https://api.twilio.com/2010-04-01/Accounts/")
                  + TWILIO_ACCOUNT_SID + "/Calls.json";
-  
+
     http.begin(client, url);
     http.setAuthorization(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  
+
     String body = "To=%2B14694066614"
     "&From=%2B17325270427"
     "&Url=http://demo.twilio.com/docs/voice.xml";
-  
+
     int code = http.POST(body);
     Serial.printf("Twilio response: %d\n", code);
     Serial.printf("Twilio message: %d\n", http.getString());
     http.end();
-  }
+}
 
+// ---------------------------------------------------------------------------
+// Button debounce helper
+// ---------------------------------------------------------------------------
 void updateButton(Button& btn) {
   btn.pressed = false;
   bool raw = digitalRead(btn.pin);
@@ -287,7 +319,71 @@ void stopAllBuzzers() {
   beepOn = false;
 }
 
-// Call every loop while passive buzzer should be beeping
+// ---------------------------------------------------------------------------
+// Nokia ringtone (non-blocking)
+// ---------------------------------------------------------------------------
+void tickNokiaRingtone() {
+  static const int notes[]  = {659, 587, 370, 415, 554, 494, 294, 330,
+                                523, 466, 277, 330, 440, 392, 262};
+  static const int NUM_NOTES = 15;
+  static int           idx        = 0;
+  static unsigned long lastNoteMs = 0;
+  static bool          started    = false;
+
+  unsigned long now = millis();
+
+  if (!started) {
+    started    = true;
+    lastNoteMs = now;
+    ledcWriteTone(LEDC_CH, notes[0]);
+    return;
+  }
+
+  unsigned long elapsed = now - lastNoteMs;
+
+  if (elapsed >= 200) {       // 150 ms note + 50 ms gap cycle complete
+    idx = (idx + 1) % NUM_NOTES;
+    ledcWriteTone(LEDC_CH, notes[idx]);
+    lastNoteMs = now;
+  } else if (elapsed >= 150) { // in the 50 ms gap
+    ledcWriteTone(LEDC_CH, 0);
+  }
+  // 0–149 ms: note is already playing, nothing to do
+}
+
+// ---------------------------------------------------------------------------
+// Strobe (non-blocking)
+// ---------------------------------------------------------------------------
+void tickStrobe() {
+  if (!bulbReady) return;
+  unsigned long now = millis();
+  if (now - strobeToggleMs < STROBE_INTERVAL_MS) return;
+  strobeToggleMs = now;
+  strobeOn = !strobeOn;
+  if (strobeOn) {
+    bulb.set_brightness(strobeBrightness);
+    bulb.on();
+  } else {
+    bulb.off();
+  }
+}
+
+void stopStrobe() {
+  strobeOn = false;
+  if (bulbReady) bulb.off();
+}
+
+// ---------------------------------------------------------------------------
+// Combined output stop
+// ---------------------------------------------------------------------------
+void stopAllOutputs() {
+  stopAllBuzzers();
+  stopStrobe();
+}
+
+// ---------------------------------------------------------------------------
+// Beep pattern tick (passive buzzer)
+// ---------------------------------------------------------------------------
 void tickBeepPattern() {
   unsigned long now = millis();
   if (beepOn) {
@@ -335,32 +431,38 @@ int slidepotThird() {
 // Alarm escalation
 // ---------------------------------------------------------------------------
 unsigned long alarmStartMs = 0;
-int           escMode      = 1;   // 1 = tone, 2 = active buzzer, 3 = calling
+int           escMode      = 1;   // 1 = ringtone/gentle, 2 = buzzer/normal/nuclear
 
-const unsigned long ESC_2_MS = 2UL * 60 * 1000;   // 2 min → mode 2
-const unsigned long ESC_3_MS = 4UL * 60 * 1000;   // 4 min → mode 3
+const unsigned long ESC_2_MS = 2UL * 60 * 1000;   // kept for OLED progress bar
+const unsigned long ESC_3_MS = 4UL * 60 * 1000;   // kept for OLED progress bar
 
-// Call every loop while state == ALARM_RINGING
+// Strategy-aware alarm escalation — no cross-mode escalation, strategies are fixed at fire time
 void tickAlarmEscalation() {
-  unsigned long elapsed = millis() - alarmStartMs;
-  int newMode = 1;
-  if      (elapsed >= ESC_3_MS) newMode = 3;
-  else if (elapsed >= ESC_2_MS) newMode = 2;
+  switch (currentStrategy) {
+    case STRAT_GENTLE:
+      escMode = 1;
+      tickNokiaRingtone();
+      break;
 
-  if (newMode != escMode) {
-    stopAllBuzzers();
-    escMode = newMode;
-    if (escMode == 3) {
-        makeWakeUpCall();  // add this line
-        Serial.println("calling using twilio");
-    }
+    case STRAT_NORMAL:
+      escMode = 2;
+      digitalWrite(ACTIVE_BUZZER, HIGH);
+      strobeBrightness = 50;
+      tickStrobe();
+      break;
 
+    case STRAT_NUCLEAR:
+      escMode = 2;
+      digitalWrite(ACTIVE_BUZZER, HIGH);
+      strobeBrightness = 100;
+      tickStrobe();
+      if (!nuclearCallMade) {
+        nuclearCallMade = true;
+        makeWakeUpCall();
+        Serial.println("Nuclear: calling via Twilio");
+      }
+      break;
   }
-
-  if      (escMode == 1) tickBeepPattern();
-  else if (escMode == 2) digitalWrite(ACTIVE_BUZZER, HIGH);
-
-  // escMode == 3: no buzzer; OLED shows "Calling..."
 }
 
 // ---------------------------------------------------------------------------
@@ -369,20 +471,22 @@ void tickAlarmEscalation() {
 unsigned long snoozeShowMs = 0;
 
 void doSnooze() {
-  stopAllBuzzers();
+  stopAllOutputs();
   snoozeCount++;
   alarmMinute += 1;
   if (alarmMinute >= 60) { alarmMinute -= 60; alarmHour = (alarmHour + 1) % 24; }
   state        = SNOOZED;
   snoozeShowMs = millis();
+  // sunriseFiredThisAlarm intentionally NOT reset here — snooze re-ring
+  // should not replay sunrise
 }
 
 // ---------------------------------------------------------------------------
-// Demo mode
+// Demo mode (legacy OLED demo, separate from web demo modalities)
 // ---------------------------------------------------------------------------
-int  demoSel           = 0;      // 0,1,2 → modes 1,2,3
-bool demoActive        = false;
-int  demoActiveMode    = 0;
+int  demoSel        = 0;      // 0,1,2 → modes 1,2,3
+bool demoActive     = false;
+int  demoActiveMode = 0;
 
 void stopDemo() {
   stopAllBuzzers();
@@ -390,6 +494,9 @@ void stopDemo() {
   demoActiveMode = 0;
 }
 
+// ---------------------------------------------------------------------------
+// OLED render
+// ---------------------------------------------------------------------------
 void renderDisplay() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -400,20 +507,20 @@ void renderDisplay() {
       int dispHour = curHour % 12;
       if (dispHour == 0) dispHour = 12;
       const char* ampm = (curHour < 12) ? "AM" : "PM";
-      
+
       display.setTextSize(3);
       char timeBuf[6];
       snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", dispHour, curMinute);
       int timeX = (128 - (5 * 18)) / 2;
       display.setCursor(timeX, 4);
       display.print(timeBuf);
-      
+
       display.setTextSize(1);
       char secBuf[4];
       snprintf(secBuf, sizeof(secBuf), ":%02d", curSecond);
       display.setCursor(110, 12);
       display.print(secBuf);
-      
+
       display.setTextSize(1);
       display.setCursor(114, 4);
       display.print(ampm);
@@ -447,7 +554,7 @@ void renderDisplay() {
       display.setTextSize(4);
       char buf[3];
       snprintf(buf, sizeof(buf), "%02d", tempHour==12 ? 12 : tempHour%12);
-      
+
       display.setCursor(44, 22);
       display.print(buf);
 
@@ -556,7 +663,7 @@ void renderDisplay() {
 }
 
 // ---------------------------------------------------------------------------
-// NTP sync — called once on boot and can be recalled on reconnect
+// NTP sync
 // ---------------------------------------------------------------------------
 void syncNTP() {
   configTime(GMT_OFFSET_SEC, DST_OFFSET_SEC, NTP_SERVER);
@@ -570,7 +677,7 @@ void syncNTP() {
 }
 
 // ---------------------------------------------------------------------------
-// Button handling — returns early once action taken this cycle
+// Button handling
 // ---------------------------------------------------------------------------
 void handleButtons() {
   bool snz = snoozeBtn.pressed;
@@ -628,10 +735,15 @@ void handleButtons() {
       if (snz) {
         doSnooze();
       } else if (cnf) {
-        stopAllBuzzers();
-        alarmActive = false;
-        snoozeCount = 0;
-        state       = HOME;
+        stopAllOutputs();
+        alarmActive          = false;
+        snoozeCount          = 0;
+        demoModalityActive   = false;
+        demoSunriseDone      = false;
+        sunriseFiredThisAlarm = false;
+        nuclearCallMade      = false;
+        sunriseActive        = false;
+        state                = HOME;
       }
       break;
 
@@ -640,17 +752,20 @@ void handleButtons() {
   }
 }
 
-
-
+// ---------------------------------------------------------------------------
+// HTTP handlers
+// ---------------------------------------------------------------------------
 void handleStatus() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  char json[160];
+  char json[220];
   snprintf(json, sizeof(json),
-    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d,\"sunrise_active\":%s}",
+    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d,\"sunrise_active\":%s,\"strategy\":%d,\"demo_active\":%s}",
     alarmHour, alarmMinute,
     (state == ALARM_RINGING) ? "true" : "false",
     escMode, snoozeCount,
-    sunriseActive ? "true" : "false");
+    sunriseActive ? "true" : "false",
+    (int)currentStrategy,
+    demoModalityActive ? "true" : "false");
   server.send(200, "application/json", json);
 }
 
@@ -666,10 +781,15 @@ void handleSet() {
 
 void handleDismiss() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  stopAllBuzzers();
-  alarmActive = false;
-  snoozeCount = 0;
-  state       = HOME;
+  stopAllOutputs();
+  alarmActive          = false;
+  snoozeCount          = 0;
+  demoModalityActive   = false;
+  demoSunriseDone      = false;
+  sunriseFiredThisAlarm = false;
+  nuclearCallMade      = false;
+  sunriseActive        = false;
+  state                = HOME;
   server.send(200, "text/plain", "OK");
 }
 
@@ -687,9 +807,9 @@ void handleTrigger() {
 void handleSnooze() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   doSnooze();
-  //snoozeCount++;
   server.send(200, "text/plain", "OK");
 }
+
 void handleEscalate() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (!server.hasArg("mode")) {
@@ -707,11 +827,44 @@ void handleEscalate() {
   if (mode == 3) makeWakeUpCall();
   server.send(200, "text/plain", "OK");
 }
+
 void handleSunrise() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   startSunrise();
   server.send(200, "text/plain", "OK");
 }
+
+// ---------------------------------------------------------------------------
+// Demo modality handlers (web-triggered, no RPi UART)
+// ---------------------------------------------------------------------------
+void handleDemoModality(Strategy strat) {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  stopAllOutputs();
+  demoModalityActive   = true;
+  demoModalityStrategy = strat;
+  demoSunriseDone      = false;
+  sunriseActive        = false;
+  startSunrise(); // sunrise always plays first in demo
+  alarmActive          = true;
+  alarmStartMs         = millis() + SUNRISE_DURATION_MS; // placeholder; overwritten after sunrise
+  escMode              = 1;
+  beepOn               = false;
+  beepToggleMs         = 0;
+  nuclearCallMade      = false;
+  strobeOn             = false;
+  strobeToggleMs       = 0;
+  strobeBrightness     = (strat == STRAT_NUCLEAR) ? 100 : 50;
+  // Do NOT set state = ALARM_RINGING yet — wait for sunrise to finish in loop()
+  // TODO: RPi UART integration (natural alarm path only):
+  // rpi.send_ready();
+  // Strategy s = rpi.recv_strategy();
+  // currentStrategy = s;
+  server.send(200, "text/plain", "OK");
+}
+
+void handleDemoGentle()  { handleDemoModality(STRAT_GENTLE);  }
+void handleDemoNormal()  { handleDemoModality(STRAT_NORMAL);  }
+void handleDemoNuclear() { handleDemoModality(STRAT_NUCLEAR); }
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -745,31 +898,30 @@ void setup() {
   display.print("Connecting to WiFi...");
   display.display();
 
-  // Replace everything from WiFi.begin(...) to the syncNTP() call with:
-WiFiManager wm;
-wm.setConfigPortalTimeout(180);
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180);
 
-display.clearDisplay();
-display.setTextSize(1);
-display.setCursor(0, 0);
-display.println("WiFi setup:");
-display.println("Connect to AP:");
-display.setTextSize(2);
-display.setCursor(0, 24);
-display.println("RiseIQ");
-display.setTextSize(1);
-display.setCursor(0, 48);
-display.println("-> 192.168.4.1");
-display.display();
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("WiFi setup:");
+  display.println("Connect to AP:");
+  display.setTextSize(2);
+  display.setCursor(0, 24);
+  display.println("RiseIQ");
+  display.setTextSize(1);
+  display.setCursor(0, 48);
+  display.println("-> 192.168.4.1");
+  display.display();
 
-if (!wm.autoConnect("RiseIQ")) {
+  if (!wm.autoConnect("RiseIQ")) {
     Serial.println("WiFi failed");
     display.clearDisplay();
     display.setCursor(0, 28);
     display.print("WiFi failed.");
     display.display();
     delay(1500);
-} else {
+  } else {
     display.clearDisplay();
     display.setCursor(0, 20);
     display.print("WiFi OK");
@@ -778,16 +930,20 @@ if (!wm.autoConnect("RiseIQ")) {
     delay(1000);
     syncNTP();
 
-    server.on("/status",  HTTP_GET, handleStatus);
-    server.on("/set",     HTTP_GET, handleSet);
-    server.on("/dismiss", HTTP_GET, handleDismiss);
-    server.on("/trigger", HTTP_GET, handleTrigger);
-    server.on("/snooze",  HTTP_GET, handleSnooze);
-    server.on("/escalate", HTTP_GET, handleEscalate);
-    server.on("/sunrise", HTTP_GET, handleSunrise);
+    server.on("/status",       HTTP_GET, handleStatus);
+    server.on("/set",          HTTP_GET, handleSet);
+    server.on("/dismiss",      HTTP_GET, handleDismiss);
+    server.on("/trigger",      HTTP_GET, handleTrigger);
+    server.on("/snooze",       HTTP_GET, handleSnooze);
+    server.on("/escalate",     HTTP_GET, handleEscalate);
+    server.on("/sunrise",      HTTP_GET, handleSunrise);
+    server.on("/demo/gentle",  HTTP_GET, handleDemoGentle);
+    server.on("/demo/normal",  HTTP_GET, handleDemoNormal);
+    server.on("/demo/nuclear", HTTP_GET, handleDemoNuclear);
     server.begin();
+
     pinMode(TAPO_BTN, INPUT_PULLUP);
-    bulbReady = bulb.begin("10.159.66.66", "akul.laddha@gmail.com", "water1234");
+    bulbReady = bulb.begin("10.159.67.114", "akul.laddha@gmail.com", "water1234");
     Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
@@ -800,7 +956,7 @@ if (!wm.autoConnect("RiseIQ")) {
     display.print(WiFi.localIP().toString());
     display.display();
     delay(3000);
-}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +964,7 @@ if (!wm.autoConnect("RiseIQ")) {
 // ---------------------------------------------------------------------------
 void loop() {
   server.handleClient();
+
   // ---- Update current time --------------------------------------------------
   struct tm t;
   if (getLocalTime(&t)) {
@@ -816,7 +973,17 @@ void loop() {
     curSecond = t.tm_sec;
     timeValid = true;
   }
+
   tickSunrise();
+
+  // ---- When demo sunrise finishes, start the alarm sequence ----------------
+  if (demoModalityActive && !sunriseActive && !demoSunriseDone) {
+    demoSunriseDone  = true;
+    currentStrategy  = demoModalityStrategy;
+    alarmStartMs     = millis();
+    state            = ALARM_RINGING;
+    alarmActive      = true;
+  }
 
   // ---- Read buttons ---------------------------------------------------------
   updateButton(snoozeBtn);
@@ -836,21 +1003,48 @@ void loop() {
   // ---- Button handling ------------------------------------------------------
   handleButtons();
 
-  // ---- Alarm trigger (only from HOME when time matches) --------------------
+  // ---- Natural alarm: fire sunrise 30 s before alarm time ------------------
+  if (state == HOME && timeValid && !sunriseFiredThisAlarm) {
+    int alarmTotalSec    = alarmHour * 3600 + alarmMinute * 60;
+    int sunriseTriggerSec = alarmTotalSec - 30;
+    if (sunriseTriggerSec < 0) sunriseTriggerSec += 86400; // handle midnight rollover
+    int curTotalSec = curHour * 3600 + curMinute * 60 + curSecond;
+
+    if (curTotalSec == sunriseTriggerSec) {
+      sunriseFiredThisAlarm = true;
+      startSunrise();
+    }
+  }
+
+  // ---- Natural alarm: fire at alarm time ------------------------------------
   if (state == HOME && timeValid &&
       curHour == alarmHour && curMinute == alarmMinute && curSecond == 0) {
-    alarmStartMs = millis();
-    escMode      = 1;
-    beepOn       = false;
-    beepToggleMs = 0;
-    alarmActive = true;
-    state        = ALARM_RINGING;
+    // TODO: uncomment RPi UART when hardware connected:
+    // rpi.send_ready();
+    // Strategy s = rpi.recv_strategy();
+    // currentStrategy = s;
+    currentStrategy  = STRAT_NORMAL; // stub: default strategy until RPi connected
+    alarmStartMs     = millis();
+    escMode          = 1;
+    beepOn           = false;
+    beepToggleMs     = 0;
+    alarmActive      = true;
+    nuclearCallMade  = false;
+    strobeOn         = false;
+    strobeToggleMs   = 0;
+    strobeBrightness = (currentStrategy == STRAT_NUCLEAR) ? 100 : 50;
+    state            = ALARM_RINGING;
   }
 
   // ---- Alarm escalation tick ------------------------------------------------
-  if (state == ALARM_RINGING) tickAlarmEscalation();
+  if (state == ALARM_RINGING) {
+    tickAlarmEscalation();
+    if (currentStrategy == STRAT_NORMAL || currentStrategy == STRAT_NUCLEAR) {
+      tickStrobe();
+    }
+  }
 
-  // ---- Demo buzzer tick -----------------------------------------------------
+  // ---- Demo buzzer tick (legacy OLED demo) ----------------------------------
   if (state == DEMO && demoActive) {
     if (demoActiveMode == 1) tickBeepPattern();
     // mode 2: active buzzer already driven HIGH in handleButtons

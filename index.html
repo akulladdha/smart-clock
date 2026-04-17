@@ -320,6 +320,58 @@
     .esc-step.active-2 { border-color: var(--warn);   color: var(--warn);   background: rgba(255,107,53,0.05); }
     .esc-step.active-3 { border-color: var(--danger); color: var(--danger); background: rgba(255,45,107,0.05); }
 
+    /* ---- Modality cards ---- */
+    .modal-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .modal-card {
+      padding: 14px 10px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      user-select: none;
+    }
+
+    .modal-card:hover { background: var(--surface); border-color: var(--muted); }
+
+    .modal-card.gentle  { border-color: rgba(200,255,0,0.25); }
+    .modal-card.gentle:hover  { border-color: var(--accent); background: rgba(200,255,0,0.05); }
+    .modal-card.normal  { border-color: rgba(255,107,53,0.25); }
+    .modal-card.normal:hover  { border-color: var(--warn); background: rgba(255,107,53,0.05); }
+    .modal-card.nuclear { border-color: rgba(255,45,107,0.25); }
+    .modal-card.nuclear:hover { border-color: var(--danger); background: rgba(255,45,107,0.05); }
+
+    .modal-card-name {
+      font-family: var(--display);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .modal-card.gentle  .modal-card-name { color: var(--accent); }
+    .modal-card.normal  .modal-card-name { color: var(--warn); }
+    .modal-card.nuclear .modal-card-name { color: var(--danger); }
+
+    .modal-card-desc {
+      font-size: 0.58rem;
+      color: var(--sub);
+      line-height: 1.4;
+      margin-bottom: 6px;
+    }
+
+    .modal-card-sunrise {
+      font-size: 0.55rem;
+      color: #ff8c00;
+      letter-spacing: 0.05em;
+    }
+
     /* ---- Buttons ---- */
     .btn {
       width: 100%;
@@ -474,6 +526,7 @@
       .left { border-right: none; border-bottom: 1px solid var(--border); padding: 32px 24px; }
       .right { padding: 32px 24px; }
       .clock-time { font-size: 4.5rem; }
+      .modal-cards { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -570,49 +623,73 @@
       <div class="toast" id="toast"></div>
     </div>
 
-    <!-- Demo / trigger -->
-<div class="section">
-  <span class="section-tag">Demo</span>
-  <div class="esc-track" style="margin-bottom:12px;">
-    <div class="esc-step" id="demo-1" onclick="triggerMode(1)" style="cursor:pointer;">
-      <span class="esc-icon">🔔</span>
-      <span class="esc-name">Ringtone</span>
+    <!-- Demo Features (escalation tiles + sunrise) -->
+    <div class="section">
+      <span class="section-tag">Demo Features</span>
+      <div class="esc-track" style="margin-bottom:12px;">
+        <div class="esc-step" id="demo-1" onclick="triggerMode(1)" style="cursor:pointer;">
+          <span class="esc-icon">🔔</span>
+          <span class="esc-name">Ringtone</span>
+        </div>
+        <div class="esc-step" id="demo-2" onclick="triggerMode(2)" style="cursor:pointer;">
+          <span class="esc-icon">📢</span>
+          <span class="esc-name">Buzzer</span>
+        </div>
+        <div class="esc-step" id="demo-3" onclick="triggerMode(3)" style="cursor:pointer;">
+          <span class="esc-icon">📞</span>
+          <span class="esc-name">Calling</span>
+        </div>
+      </div>
+      <button class="btn btn-danger" onclick="triggerAlarm()" style="margin-bottom:16px;">▶ Fire Full Sequence</button>
+      <div class="toast" id="demo-toast" style="margin-bottom:12px;"></div>
+
+      <!-- Sunrise simulation (merged into Demo Features) -->
+      <div style="border-top:1px solid var(--border);padding-top:16px;">
+        <div style="font-size:0.6rem;color:var(--sub);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:10px;">Sunrise Simulation</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <div id="sunrise-indicator" style="
+            width:32px;height:32px;border-radius:50%;
+            background:var(--border);
+            transition:background 1s ease;
+            flex-shrink:0;
+          "></div>
+          <div>
+            <div style="font-size:0.7rem;color:var(--sub);letter-spacing:0.1em;text-transform:uppercase;">Status</div>
+            <div style="font-size:0.85rem;color:var(--text);" id="sunrise-status">Idle</div>
+          </div>
+        </div>
+        <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:12px;overflow:hidden;">
+          <div id="sunrise-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#800080,#ff69b4,#ff4500,#ff8c00,#ffd700);transition:width 0.5s ease;border-radius:2px;"></div>
+        </div>
+        <button class="btn" id="sunrise-btn" onclick="triggerSunrise()"
+          style="border-color:rgba(255,140,0,0.4);color:#ff8c00;">
+          🌅 Start Sunrise
+        </button>
+      </div>
     </div>
-    <div class="esc-step" id="demo-2" onclick="triggerMode(2)" style="cursor:pointer;">
-      <span class="esc-icon">📢</span>
-      <span class="esc-name">Buzzer</span>
+
+    <!-- Demo Modalities -->
+    <div class="section">
+      <span class="section-tag">Demo Modalities</span>
+      <div class="modal-cards">
+        <div class="modal-card gentle" id="modal-btn-gentle" onclick="triggerDemoModality('gentle')">
+          <div class="modal-card-name">Gentle</div>
+          <div class="modal-card-desc">Nokia ringtone only</div>
+          <div class="modal-card-sunrise">🌅 Sunrise first</div>
+        </div>
+        <div class="modal-card normal" id="modal-btn-normal" onclick="triggerDemoModality('normal')">
+          <div class="modal-card-name">Normal</div>
+          <div class="modal-card-desc">Active buzzer + strobe 50%</div>
+          <div class="modal-card-sunrise">🌅 Sunrise first</div>
+        </div>
+        <div class="modal-card nuclear" id="modal-btn-nuclear" onclick="triggerDemoModality('nuclear')">
+          <div class="modal-card-name">Nuclear</div>
+          <div class="modal-card-desc">Buzzer + strobe 100% + call</div>
+          <div class="modal-card-sunrise">🌅 Sunrise first</div>
+        </div>
+      </div>
+      <div id="modal-status" style="font-size:0.7rem;color:var(--sub);min-height:20px;padding:4px 0;letter-spacing:0.05em;"></div>
     </div>
-    <div class="esc-step" id="demo-3" onclick="triggerMode(3)" style="cursor:pointer;">
-      <span class="esc-icon">📞</span>
-      <span class="esc-name">Calling</span>
-    </div>
-  </div>
-  <button class="btn btn-danger" onclick="triggerAlarm()">▶ Fire Full Sequence</button>
-  <div class="toast" id="demo-toast" style="margin-top:8px;"></div>
-</div>
-<!-- Sunrise -->
-<div class="section">
-  <span class="section-tag">Sunrise Simulation</span>
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-    <div id="sunrise-indicator" style="
-      width:32px;height:32px;border-radius:50%;
-      background:var(--border);
-      transition:background 1s ease;
-      flex-shrink:0;
-    "></div>
-    <div>
-      <div style="font-size:0.7rem;color:var(--sub);letter-spacing:0.1em;text-transform:uppercase;">Status</div>
-      <div style="font-size:0.85rem;color:var(--text);" id="sunrise-status">Idle</div>
-    </div>
-  </div>
-  <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:16px;overflow:hidden;">
-    <div id="sunrise-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#ff4500,#ff8c00,#ffd700);transition:width 0.5s ease;border-radius:2px;"></div>
-  </div>
-  <button class="btn" id="sunrise-btn" onclick="triggerSunrise()"
-    style="border-color:rgba(255,140,0,0.4);color:#ff8c00;">
-    🌅 Start Sunrise
-  </button>
-</div>
 
     <!-- IP config -->
     <div class="section">
@@ -634,7 +711,6 @@
   let ESP_IP = localStorage.getItem('esp_ip') || '';
   let ESP    = ESP_IP ? `http://${ESP_IP}` : '';
 
-  // Pre-fill IP input
   if (ESP_IP) document.getElementById('esp-ip').value = ESP_IP;
 
   function updateESP(val) {
@@ -648,7 +724,6 @@
   const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // replace tickClock with:
   function tickClock() {
     const now = new Date();
     let h = now.getHours();
@@ -696,59 +771,66 @@
       el.className = 'esc-step' + (i === mode ? ` active-${mode}` : '');
     });
   }
+
   // ---- Sunrise ----
-let sunriseTimer = null;
-let sunriseStart = null;
+  let sunriseTimer = null;
+  let sunriseStart = null;
 
-async function triggerSunrise() {
-  if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
-  try {
-    await fetch(`${ESP}/sunrise`);
-    sunriseStart = Date.now();
-    document.getElementById('sunrise-btn').disabled = true;
-    document.getElementById('sunrise-btn').textContent = '🌅 Sunrise Running...';
-    animateSunrise();
-    toast('Sunrise started', 'ok');
-  } catch (_) { toast('Cannot reach ESP32', 'err'); }
-}
+  async function triggerSunrise() {
+    if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
+    try {
+      await fetch(`${ESP}/sunrise`);
+      sunriseStart = Date.now();
+      document.getElementById('sunrise-btn').disabled = true;
+      document.getElementById('sunrise-btn').textContent = '🌅 Sunrise Running...';
+      animateSunrise();
+      toast('Sunrise started', 'ok');
+    } catch (_) { toast('Cannot reach ESP32', 'err'); }
+  }
 
-function animateSunrise() {
-  clearInterval(sunriseTimer);
-  sunriseTimer = setInterval(() => {
-    if (!sunriseStart) return;
-    const elapsed  = Date.now() - sunriseStart;
-    const progress = Math.min(elapsed / 30000, 1.0);
-    const pct      = Math.round(progress * 100);
+  function animateSunrise() {
+    clearInterval(sunriseTimer);
+    sunriseTimer = setInterval(() => {
+      if (!sunriseStart) return;
+      const elapsed  = Date.now() - sunriseStart;
+      const progress = Math.min(elapsed / 30000, 1.0);
+      const pct      = Math.round(progress * 100);
 
-    // Progress bar
-    document.getElementById('sunrise-bar').style.width = pct + '%';
+      // Progress bar
+      document.getElementById('sunrise-bar').style.width = pct + '%';
 
-    // Status text
-    document.getElementById('sunrise-status').textContent =
-      progress < 1 ? `${pct}% complete` : 'Complete';
+      // Status text
+      document.getElementById('sunrise-status').textContent =
+        progress < 1 ? `${pct}% complete` : 'Complete';
 
-    // Indicator color: deep red → orange → yellow
-    const r = 255;
-    const g = Math.round(progress * 200);
-    const b = Math.round(progress * 50);
-    document.getElementById('sunrise-indicator').style.background =
-      `rgb(${r},${g},${b})`;
+      // Indicator color: purple → pink → orange → yellow → white
+      let r, g, b;
+      if (progress < 0.4) {
+        // purple to pink
+        r = 180 + Math.round(progress / 0.4 * 75);
+        g = 0;
+        b = Math.round(200 - progress / 0.4 * 100);
+      } else if (progress < 0.7) {
+        // pink to orange
+        r = 255;
+        g = Math.round((progress - 0.4) / 0.3 * 140);
+        b = Math.round(100 - (progress - 0.4) / 0.3 * 100);
+      } else {
+        // orange to white
+        r = 255;
+        g = Math.round(140 + (progress - 0.7) / 0.3 * 115);
+        b = Math.round((progress - 0.7) / 0.3 * 255);
+      }
+      document.getElementById('sunrise-indicator').style.background = `rgb(${r},${g},${b})`;
 
-    if (progress >= 1) {
-      clearInterval(sunriseTimer);
-      sunriseStart = null;
-      document.getElementById('sunrise-btn').disabled = false;
-      document.getElementById('sunrise-btn').textContent = '🌅 Start Sunrise';
-    }
-  }, 500);
-}
-
-// Restore sunrise state on poll
-// Add inside pollStatus() after the alarm_active block:
-// if (d.sunrise_active && !sunriseStart) {
-//   sunriseStart = Date.now();
-//   animateSunrise();
-// }
+      if (progress >= 1) {
+        clearInterval(sunriseTimer);
+        sunriseStart = null;
+        document.getElementById('sunrise-btn').disabled = false;
+        document.getElementById('sunrise-btn').textContent = '🌅 Start Sunrise';
+      }
+    }, 500);
+  }
 
   // ---- Poll status ----
   async function pollStatus() {
@@ -784,9 +866,24 @@ function animateSunrise() {
         panel.classList.remove('visible');
         setStatus(false);
       }
+
+      // Sunrise state sync
       if (d.sunrise_active && !sunriseStart) {
         sunriseStart = Date.now();
         animateSunrise();
+      }
+
+      // Re-enable modality cards when alarm/demo/sunrise all clear
+      if (!d.alarm_active && !d.demo_active && !d.sunrise_active) {
+        ['gentle', 'normal', 'nuclear'].forEach(s => {
+          const btn = document.getElementById(`modal-btn-${s}`);
+          btn.style.opacity       = '1';
+          btn.style.pointerEvents = '';
+          btn.style.cursor        = 'pointer';
+        });
+        clearTimeout(demoModalityTimer);
+        demoModalityTimer = null;
+        document.getElementById('modal-status').textContent = '';
       }
 
     } catch (_) {
@@ -852,26 +949,56 @@ function animateSunrise() {
       setTimeout(pollStatus, 600);
     } catch (_) { toast('Cannot reach ESP32', 'err'); }
   }
+
+  // ---- Escalation mode demo tiles ----
   async function triggerMode(mode) {
-  if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
-  // Highlight selected
-  [1,2,3].forEach(i => {
-    document.getElementById(`demo-${i}`).className =
-      'esc-step' + (i === mode ? ` active-${mode}` : '');
-  });
-  try {
-    await fetch(`${ESP}/escalate?mode=${mode}`);
-    const labels = ['', 'Ringtone fired', 'Buzzer fired', 'Calling now...'];
-    const demoToast = document.getElementById('demo-toast');
-    demoToast.textContent = labels[mode];
-    demoToast.className = 'toast ok';
-    setTimeout(() => { demoToast.textContent = ''; demoToast.className = 'toast'; }, 3000);
-    setTimeout(pollStatus, 600);
-  } catch (_) {
-    document.getElementById('demo-toast').textContent = 'Cannot reach ESP32';
-    document.getElementById('demo-toast').className = 'toast err';
+    if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
+    [1,2,3].forEach(i => {
+      document.getElementById(`demo-${i}`).className =
+        'esc-step' + (i === mode ? ` active-${mode}` : '');
+    });
+    try {
+      await fetch(`${ESP}/escalate?mode=${mode}`);
+      const labels = ['', 'Ringtone fired', 'Buzzer fired', 'Calling now...'];
+      const demoToast = document.getElementById('demo-toast');
+      demoToast.textContent = labels[mode];
+      demoToast.className = 'toast ok';
+      setTimeout(() => { demoToast.textContent = ''; demoToast.className = 'toast'; }, 3000);
+      setTimeout(pollStatus, 600);
+    } catch (_) {
+      document.getElementById('demo-toast').textContent = 'Cannot reach ESP32';
+      document.getElementById('demo-toast').className = 'toast err';
+    }
   }
-}
+
+  // ---- Demo modalities ----
+  let demoModalityTimer = null;
+
+  async function triggerDemoModality(strat) {
+    if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
+    const endpoints = { gentle: '/demo/gentle', normal: '/demo/normal', nuclear: '/demo/nuclear' };
+    const labels    = { gentle: 'Gentle', normal: 'Normal', nuclear: 'Nuclear' };
+    try {
+      await fetch(`${ESP}${endpoints[strat]}`);
+
+      // Disable all modality cards while running
+      ['gentle', 'normal', 'nuclear'].forEach(s => {
+        const btn = document.getElementById(`modal-btn-${s}`);
+        btn.style.opacity       = '0.35';
+        btn.style.pointerEvents = 'none';
+        btn.style.cursor        = 'not-allowed';
+      });
+
+      document.getElementById('modal-status').textContent = 'Sunrise playing... (30s)';
+      clearTimeout(demoModalityTimer);
+      demoModalityTimer = setTimeout(() => {
+        document.getElementById('modal-status').textContent =
+          `${labels[strat]} alarm running — press Dismiss to stop`;
+      }, 30000);
+
+      toast(`${labels[strat]} demo started`, 'ok');
+    } catch (_) { toast('Cannot reach ESP32', 'err'); }
+  }
 
   // ---- Init ----
   if (ESP) pollStatus();
