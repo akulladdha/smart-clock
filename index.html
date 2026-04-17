@@ -543,7 +543,7 @@
       </div>
 
       <div class="btn-row">
-        <button class="btn btn-warn" onclick="doSnooze()">Snooze +5m</button>
+        <button class="btn btn-warn" onclick="doSnooze()">Snooze +1m</button>
         <button class="btn btn-danger" onclick="dismissAlarm()">Dismiss</button>
       </div>
 
@@ -589,6 +589,29 @@
   </div>
   <button class="btn btn-danger" onclick="triggerAlarm()">▶ Fire Full Sequence</button>
   <div class="toast" id="demo-toast" style="margin-top:8px;"></div>
+</div>
+<!-- Sunrise -->
+<div class="section">
+  <span class="section-tag">Sunrise Simulation</span>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+    <div id="sunrise-indicator" style="
+      width:32px;height:32px;border-radius:50%;
+      background:var(--border);
+      transition:background 1s ease;
+      flex-shrink:0;
+    "></div>
+    <div>
+      <div style="font-size:0.7rem;color:var(--sub);letter-spacing:0.1em;text-transform:uppercase;">Status</div>
+      <div style="font-size:0.85rem;color:var(--text);" id="sunrise-status">Idle</div>
+    </div>
+  </div>
+  <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:16px;overflow:hidden;">
+    <div id="sunrise-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#ff4500,#ff8c00,#ffd700);transition:width 0.5s ease;border-radius:2px;"></div>
+  </div>
+  <button class="btn" id="sunrise-btn" onclick="triggerSunrise()"
+    style="border-color:rgba(255,140,0,0.4);color:#ff8c00;">
+    🌅 Start Sunrise
+  </button>
 </div>
 
     <!-- IP config -->
@@ -673,6 +696,59 @@
       el.className = 'esc-step' + (i === mode ? ` active-${mode}` : '');
     });
   }
+  // ---- Sunrise ----
+let sunriseTimer = null;
+let sunriseStart = null;
+
+async function triggerSunrise() {
+  if (!ESP) { toast('Enter ESP32 IP first', 'err'); return; }
+  try {
+    await fetch(`${ESP}/sunrise`);
+    sunriseStart = Date.now();
+    document.getElementById('sunrise-btn').disabled = true;
+    document.getElementById('sunrise-btn').textContent = '🌅 Sunrise Running...';
+    animateSunrise();
+    toast('Sunrise started', 'ok');
+  } catch (_) { toast('Cannot reach ESP32', 'err'); }
+}
+
+function animateSunrise() {
+  clearInterval(sunriseTimer);
+  sunriseTimer = setInterval(() => {
+    if (!sunriseStart) return;
+    const elapsed  = Date.now() - sunriseStart;
+    const progress = Math.min(elapsed / 30000, 1.0);
+    const pct      = Math.round(progress * 100);
+
+    // Progress bar
+    document.getElementById('sunrise-bar').style.width = pct + '%';
+
+    // Status text
+    document.getElementById('sunrise-status').textContent =
+      progress < 1 ? `${pct}% complete` : 'Complete';
+
+    // Indicator color: deep red → orange → yellow
+    const r = 255;
+    const g = Math.round(progress * 200);
+    const b = Math.round(progress * 50);
+    document.getElementById('sunrise-indicator').style.background =
+      `rgb(${r},${g},${b})`;
+
+    if (progress >= 1) {
+      clearInterval(sunriseTimer);
+      sunriseStart = null;
+      document.getElementById('sunrise-btn').disabled = false;
+      document.getElementById('sunrise-btn').textContent = '🌅 Start Sunrise';
+    }
+  }, 500);
+}
+
+// Restore sunrise state on poll
+// Add inside pollStatus() after the alarm_active block:
+// if (d.sunrise_active && !sunriseStart) {
+//   sunriseStart = Date.now();
+//   animateSunrise();
+// }
 
   // ---- Poll status ----
   async function pollStatus() {
@@ -707,6 +783,10 @@
       } else {
         panel.classList.remove('visible');
         setStatus(false);
+      }
+      if (d.sunrise_active && !sunriseStart) {
+        sunriseStart = Date.now();
+        animateSunrise();
       }
 
     } catch (_) {
@@ -768,7 +848,7 @@
     if (!ESP) return;
     try {
       await fetch(`${ESP}/snooze`);
-      toast('Snoozed +5 min', 'ok');
+      toast('Snoozed +1 min', 'ok');
       setTimeout(pollStatus, 600);
     } catch (_) { toast('Cannot reach ESP32', 'err'); }
   }

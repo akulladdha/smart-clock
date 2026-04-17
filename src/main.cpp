@@ -127,6 +127,97 @@ Button snoozeBtn  = { SNOOZE_BTN,  HIGH, HIGH, 0, false };
 Button confirmBtn = { CONFIRM_BTN, HIGH, HIGH, 0, false };
 Button tapoBtn = { TAPO_BTN, HIGH, HIGH, 0, false };
 
+// Sunrise state
+bool     sunriseActive   = false;
+unsigned long sunriseStartMs = 0;
+const unsigned long SUNRISE_DURATION_MS = 30000; // 30 seconds
+
+void tickSunrise() {
+  if (!sunriseActive || !bulbReady) return;
+
+  unsigned long elapsed = millis() - sunriseStartMs;
+  if (elapsed >= SUNRISE_DURATION_MS) {
+    bulb.set_color_temperature(5500);
+    bulb.set_brightness(100);
+    sunriseActive = false;
+    Serial.println("Sunrise complete");
+    return;
+  }
+
+  static unsigned long lastUpdateMs = 0;
+  if (millis() - lastUpdateMs < 2000) return;
+  lastUpdateMs = millis();
+
+  float p = (float)elapsed / SUNRISE_DURATION_MS; // 0.0 → 1.0
+
+  // Brightness: 5 → 100
+  uint8_t brightness = (uint8_t)(5 + p * 95);
+
+  // Color phases across 0.0 → 1.0:
+  // 0.00 - 0.20 : purple    (hue ~280, sat 80)
+  // 0.20 - 0.40 : pink      (hue ~320, sat 90)
+  // 0.40 - 0.55 : red       (hue ~0,   sat 100)
+  // 0.55 - 0.70 : orange    (hue ~25,  sat 100)
+  // 0.70 - 0.85 : yellow    (hue ~50,  sat 90)
+  // 0.85 - 1.00 : white     (color temp mode)
+
+  Serial.printf("Sunrise %.0f%% brightness:%d\n", p * 100, brightness);
+
+  bulb.set_brightness(brightness);
+
+  if (p < 0.20f) {
+    // Purple
+    float sub = p / 0.20f;
+    uint16_t hue = (uint16_t)(280 + sub * 10);  // 280 → 290
+    uint8_t  sat = (uint8_t)(80 + sub * 5);      // 80  → 85
+    bulb.set_color(hue, sat);
+
+  } else if (p < 0.40f) {
+    // Purple → Pink
+    float sub = (p - 0.20f) / 0.20f;
+    uint16_t hue = (uint16_t)(290 + sub * 40);  // 290 → 330
+    uint8_t  sat = (uint8_t)(85 + sub * 10);     // 85  → 95
+    bulb.set_color(hue, sat);
+
+  } else if (p < 0.55f) {
+    // Pink → Red
+    float sub = (p - 0.40f) / 0.15f;
+    uint16_t hue = (uint16_t)(330 + sub * 30);  // 330 → 360
+    if (hue >= 360) hue = 0;
+    uint8_t sat = 100;
+    bulb.set_color(hue, sat);
+
+  } else if (p < 0.70f) {
+    // Red → Orange
+    float sub = (p - 0.55f) / 0.15f;
+    uint16_t hue = (uint16_t)(sub * 25);         // 0 → 25
+    bulb.set_color(hue, 100);
+
+  } else if (p < 0.85f) {
+    // Orange → Yellow
+    float sub = (p - 0.70f) / 0.15f;
+    uint16_t hue = (uint16_t)(25 + sub * 30);   // 25 → 55
+    uint8_t  sat = (uint8_t)(100 - sub * 15);    // 100 → 85
+    bulb.set_color(hue, sat);
+
+  } else {
+    // Yellow → Bright White (switch to color temp mode)
+    float sub = (p - 0.85f) / 0.15f;
+    uint16_t kelvin = (uint16_t)(3000 + sub * 2500); // 3000 → 5500
+    bulb.set_color_temperature(kelvin);
+  }
+}
+
+void startSunrise() {
+  if (!bulbReady) return;
+  sunriseActive  = true;
+  sunriseStartMs = millis();
+  bulb.on();
+  bulb.set_brightness(5);
+  bulb.set_color(280, 80);  // start: deep purple, low brightness
+  Serial.println("Sunrise started");
+}
+
 void makeWakeUpCall() {
     WiFiClientSecure client;
     client.setInsecure();
@@ -280,7 +371,7 @@ unsigned long snoozeShowMs = 0;
 void doSnooze() {
   stopAllBuzzers();
   snoozeCount++;
-  alarmMinute += 5;
+  alarmMinute += 1;
   if (alarmMinute >= 60) { alarmMinute -= 60; alarmHour = (alarmHour + 1) % 24; }
   state        = SNOOZED;
   snoozeShowMs = millis();
@@ -445,7 +536,7 @@ void renderDisplay() {
       if (aHour == 0) aHour = 12;
       display.printf("%02d:%02d %s", aHour, curMinute, curHour < 12 ? "AM" : "PM");
       display.setCursor(50, 48);
-      display.print("SNZ+5m CNF=off");
+      display.print("SNZ+1m CNF=off");
       break;
     }
 
@@ -456,7 +547,7 @@ void renderDisplay() {
       display.print("Snoozed");
       display.setTextSize(1);
       display.setCursor(38, 44);
-      display.print("+5 min");
+      display.print("+1 min");
       break;
     }
   }
@@ -553,12 +644,13 @@ void handleButtons() {
 
 void handleStatus() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  char json[128];
+  char json[160];
   snprintf(json, sizeof(json),
-    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d}",
+    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d,\"sunrise_active\":%s}",
     alarmHour, alarmMinute,
     (state == ALARM_RINGING) ? "true" : "false",
-    escMode, snoozeCount);
+    escMode, snoozeCount,
+    sunriseActive ? "true" : "false");
   server.send(200, "application/json", json);
 }
 
@@ -613,6 +705,11 @@ void handleEscalate() {
   alarmActive  = true;
   state        = ALARM_RINGING;
   if (mode == 3) makeWakeUpCall();
+  server.send(200, "text/plain", "OK");
+}
+void handleSunrise() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  startSunrise();
   server.send(200, "text/plain", "OK");
 }
 
@@ -687,9 +784,10 @@ if (!wm.autoConnect("RiseIQ")) {
     server.on("/trigger", HTTP_GET, handleTrigger);
     server.on("/snooze",  HTTP_GET, handleSnooze);
     server.on("/escalate", HTTP_GET, handleEscalate);
+    server.on("/sunrise", HTTP_GET, handleSunrise);
     server.begin();
     pinMode(TAPO_BTN, INPUT_PULLUP);
-    bulbReady = bulb.begin("10.159.64.202", "akul.laddha@gmail.com", "water1234");
+    bulbReady = bulb.begin("10.159.66.66", "akul.laddha@gmail.com", "water1234");
     Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
@@ -718,6 +816,7 @@ void loop() {
     curSecond = t.tm_sec;
     timeValid = true;
   }
+  tickSunrise();
 
   // ---- Read buttons ---------------------------------------------------------
   updateButton(snoozeBtn);
