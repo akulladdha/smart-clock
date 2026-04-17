@@ -9,6 +9,7 @@
 #include "secrets.h"
 #include <WebServer.h>
 #include "tapoAPI/tapo_device.h"
+#include "include/uart.h"
 
 //!Test communication that works
 /*
@@ -61,7 +62,8 @@ void setup() {
 #define SNOOZE_BTN      18
 #define CONFIRM_BTN     19
 #define SLIDEPOT_PIN    32   // ADC1 channel 4, 12-bit (0-4095)
-#define TAPO_BTN 4
+
+//#define TAPO_BTN 4
 
 // ---------------------------------------------------------------------------
 // OLED
@@ -70,6 +72,7 @@ void setup() {
 #define SCREEN_H  64
 Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, &Wire, -1);
 
+bool naturalAlarmPendingAfterSunrise = false;
 // ---------------------------------------------------------------------------
 // WiFi / NTP
 // ---------------------------------------------------------------------------
@@ -78,6 +81,8 @@ const char* WIFI_PASS      = "hillbilly";
 const char* NTP_SERVER     = "pool.ntp.org";
 const long  GMT_OFFSET_SEC = -21600;  // CST (UTC-6) — adjust as needed
 const int   DST_OFFSET_SEC =   3600;
+
+RPiUART rpi;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -125,7 +130,7 @@ struct Button {
 
 Button snoozeBtn  = { SNOOZE_BTN,  HIGH, HIGH, 0, false };
 Button confirmBtn = { CONFIRM_BTN, HIGH, HIGH, 0, false };
-Button tapoBtn    = { TAPO_BTN,    HIGH, HIGH, 0, false };
+//Button tapoBtn    = { TAPO_BTN,    HIGH, HIGH, 0, false };
 
 // ---------------------------------------------------------------------------
 // Sunrise state
@@ -137,7 +142,7 @@ const unsigned long SUNRISE_DURATION_MS = 30000; // 30 seconds
 // ---------------------------------------------------------------------------
 // Strategy tracking
 // ---------------------------------------------------------------------------
-enum Strategy { STRAT_GENTLE, STRAT_NORMAL, STRAT_NUCLEAR };
+//enum Strategy { STRAT_GENTLE, STRAT_NORMAL, STRAT_NUCLEAR };
 Strategy currentStrategy = STRAT_NORMAL;
 bool sunriseFiredThisAlarm = false; // prevents sunrise replaying after snooze
 
@@ -742,6 +747,7 @@ void handleButtons() {
         demoSunriseDone      = false;
         sunriseFiredThisAlarm = false;
         nuclearCallMade      = false;
+        naturalAlarmPendingAfterSunrise = false;  // add this
         sunriseActive        = false;
         state                = HOME;
       }
@@ -788,6 +794,7 @@ void handleDismiss() {
   demoSunriseDone      = false;
   sunriseFiredThisAlarm = false;
   nuclearCallMade      = false;
+  naturalAlarmPendingAfterSunrise = false;
   sunriseActive        = false;
   state                = HOME;
   server.send(200, "text/plain", "OK");
@@ -871,6 +878,7 @@ void handleDemoNuclear() { handleDemoModality(STRAT_NUCLEAR); }
 // ---------------------------------------------------------------------------
 void setup() {
   Serial.begin(9600);
+  rpi.begin();  // add this
   Serial.println(WiFi.macAddress());
 
   // Hardware init
@@ -942,7 +950,7 @@ void setup() {
     server.on("/demo/nuclear", HTTP_GET, handleDemoNuclear);
     server.begin();
 
-    pinMode(TAPO_BTN, INPUT_PULLUP);
+    //pinMode(TAPO_BTN, INPUT_PULLUP);
     bulbReady = bulb.begin("10.159.67.114", "akul.laddha@gmail.com", "water1234");
     Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
@@ -988,12 +996,12 @@ void loop() {
   // ---- Read buttons ---------------------------------------------------------
   updateButton(snoozeBtn);
   updateButton(confirmBtn);
-  updateButton(tapoBtn);
+  /*updateButton(tapoBtn);
   if (tapoBtn.pressed && bulbReady) {
     bulbOn = !bulbOn;
     if (bulbOn) bulb.on();
     else        bulb.off();
-  }
+  }*/
 
   // ---- Continuous slidepot reads for SET screens ----------------------------
   if (state == SET_HOUR)   tempHour   = slidepotMap(0, 23);
@@ -1004,37 +1012,37 @@ void loop() {
   handleButtons();
 
   // ---- Natural alarm: fire sunrise 30 s before alarm time ------------------
-  if (state == HOME && timeValid && !sunriseFiredThisAlarm) {
-    int alarmTotalSec    = alarmHour * 3600 + alarmMinute * 60;
-    int sunriseTriggerSec = alarmTotalSec - 30;
-    if (sunriseTriggerSec < 0) sunriseTriggerSec += 86400; // handle midnight rollover
-    int curTotalSec = curHour * 3600 + curMinute * 60 + curSecond;
+  // Fire sunrise 30 seconds before alarm
+if (state == HOME && timeValid && !sunriseFiredThisAlarm) {
+  int alarmTotalSec     = alarmHour * 3600 + alarmMinute * 60;
+  int sunriseTriggerSec = alarmTotalSec - 30;
+  if (sunriseTriggerSec < 0) sunriseTriggerSec += 86400;
+  int curTotalSec = curHour * 3600 + curMinute * 60 + curSecond;
 
-    if (curTotalSec == sunriseTriggerSec) {
-      sunriseFiredThisAlarm = true;
-      startSunrise();
-    }
+  if (curTotalSec == sunriseTriggerSec) {
+    sunriseFiredThisAlarm            = true;
+    naturalAlarmPendingAfterSunrise  = true;
+    startSunrise();
   }
+}
 
-  // ---- Natural alarm: fire at alarm time ------------------------------------
-  if (state == HOME && timeValid &&
-      curHour == alarmHour && curMinute == alarmMinute && curSecond == 0) {
-    // TODO: uncomment RPi UART when hardware connected:
-    // rpi.send_ready();
-    // Strategy s = rpi.recv_strategy();
-    // currentStrategy = s;
-    currentStrategy  = STRAT_NORMAL; // stub: default strategy until RPi connected
-    alarmStartMs     = millis();
-    escMode          = 1;
-    beepOn           = false;
-    beepToggleMs     = 0;
-    alarmActive      = true;
-    nuclearCallMade  = false;
-    strobeOn         = false;
-    strobeToggleMs   = 0;
-    strobeBrightness = (currentStrategy == STRAT_NUCLEAR) ? 100 : 50;
-    state            = ALARM_RINGING;
-  }
+// Fire alarm at exact time OR after sunrise completes for natural alarm
+if (naturalAlarmPendingAfterSunrise && !sunriseActive && state == HOME) {
+  naturalAlarmPendingAfterSunrise = false;
+  rpi.send_ready();
+  Strategy uartStrategy = rpi.recv_strategy();
+  currentStrategy = uartStrategy;
+  alarmStartMs     = millis();
+  escMode          = 1;
+  beepOn           = false;
+  beepToggleMs     = 0;
+  alarmActive      = true;
+  nuclearCallMade  = false;
+  strobeOn         = false;
+  strobeToggleMs   = 0;
+  strobeBrightness = (currentStrategy == STRAT_NUCLEAR) ? 100 : 50;
+  state            = ALARM_RINGING;
+}
 
   // ---- Alarm escalation tick ------------------------------------------------
   if (state == ALARM_RINGING) {

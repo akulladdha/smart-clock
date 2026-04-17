@@ -22,8 +22,8 @@
 // ---------------------------------------------------------------------------
 #define RPI_UART         Serial2
 #define RPI_UART_BAUD    9600
-#define RPI_TX           4
-#define RPI_RX           2
+#define RPI_TX           17
+#define RPI_RX           16
 
 // ---------------------------------------------------------------------------
 // Strategy type

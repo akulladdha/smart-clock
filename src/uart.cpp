@@ -15,18 +15,24 @@ void RPiUART::send_ready() {
 
 Strategy RPiUART::recv_strategy() {
     Serial.println("[UART] Waiting for strategy...");
+    unsigned long start = millis();
     while (true) {
-        wait_for_start();
-        uint8_t code = recv_byte();
-        switch (code) {
-            case CODE_GENTLE:  return STRAT_GENTLE;
-            case CODE_NORMAL:  return STRAT_NORMAL;
-            case CODE_NUCLEAR: return STRAT_NUCLEAR;
-            default:
-                Serial.printf("[UART] Unexpected code 0x%02X, discarding.\n", code);
-        }
+      if (millis() - start > 10000) {  // 10 second timeout
+        Serial.println("[UART] Strategy timeout, defaulting to NORMAL");
+        return STRAT_NORMAL;
+      }
+      if (RPI_UART.available() == 0) continue;
+      wait_for_start();
+      uint8_t code = recv_byte();
+      switch (code) {
+        case CODE_GENTLE:  return STRAT_GENTLE;
+        case CODE_NORMAL:  return STRAT_NORMAL;
+        case CODE_NUCLEAR: return STRAT_NUCLEAR;
+        default:
+          Serial.printf("[UART] Unexpected code 0x%02X, discarding.\n", code);
+      }
     }
-}
+  }
 
 void RPiUART::send_wake_report(WakeOutcome &out) {
     send_byte(START_BYTE);
