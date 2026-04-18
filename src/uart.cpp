@@ -51,7 +51,13 @@ void RPiUART::send_wake_report(WakeOutcome &out) {
 
 void RPiUART::wait_for_ack() {
     Serial.println("[UART] Waiting for ACK...");
+    unsigned long start = millis();
     while (true) {
+        if (millis() - start > 5000) {
+            Serial.println("[UART] ACK timeout.");
+            return;
+        }
+        if (RPI_UART.available() == 0) continue;
         wait_for_start();
         uint8_t code = recv_byte();
         if (code == CODE_ACK) {

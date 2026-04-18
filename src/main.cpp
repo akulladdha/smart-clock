@@ -159,6 +159,15 @@ bool          demoSunriseDone      = false; // tracks if demo sunrise finished
 
 // Nuclear call tracking
 bool nuclearCallMade = false;
+bool pendingTwilioCall = false;
+
+// Phase tracking - advances on each snooze, persists across re-rings
+int           alarmPhase         = 1;
+unsigned long phaseStartMs       = 0;
+bool          escalatedToNuclear = false;
+
+// Wake report tracking
+unsigned long alarmFireMs = 0;  // millis() when alarm started ringing
 
 // ---------------------------------------------------------------------------
 // Sunrise tick and start
@@ -261,6 +270,7 @@ void makeWakeUpCall() {
                  + TWILIO_ACCOUNT_SID + "/Calls.json";
 
     http.begin(client, url);
+    http.setTimeout(15000);
     http.setAuthorization(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
@@ -270,13 +280,30 @@ void makeWakeUpCall() {
 
     int code = http.POST(body);
     Serial.printf("Twilio response: %d\n", code);
-    Serial.printf("Twilio message: %d\n", http.getString());
+    Serial.printf("Twilio error: %s\n", http.errorToString(code).c_str());
+    String responseBody = http.getString();
+    Serial.println(responseBody);
     http.end();
 }
 
 // ---------------------------------------------------------------------------
 // Button debounce helper
 // ---------------------------------------------------------------------------
+void sendWakeReport() {
+  unsigned long elapsedMs = millis() - alarmFireMs;
+  uint16_t responseTimeSec = (uint16_t)min((unsigned long)65535, elapsedMs / 1000UL);
+  WakeOutcome outcome = {
+    .woke            = true,
+    .snooze_count    = (uint8_t)snoozeCount,
+    .response_time_s = responseTimeSec,
+    .safety_override = escalatedToNuclear
+  };
+  rpi.send_wake_report(outcome);
+  rpi.wait_for_ack();
+  Serial.printf("[MAIN] Wake report sent: snooze=%d time=%ds override=%d\n",
+    snoozeCount, responseTimeSec, (int)escalatedToNuclear);
+}
+
 void updateButton(Button& btn) {
   btn.pressed = false;
   bool raw = digitalRead(btn.pin);
@@ -291,6 +318,7 @@ void updateButton(Button& btn) {
     btn.stable = newStable;
   }
 }
+
 
 // ---------------------------------------------------------------------------
 // Passive buzzer (LEDC channel 0)
@@ -441,30 +469,64 @@ int           escMode      = 1;   // 1 = ringtone/gentle, 2 = buzzer/normal/nucl
 const unsigned long ESC_2_MS = 2UL * 60 * 1000;   // kept for OLED progress bar
 const unsigned long ESC_3_MS = 4UL * 60 * 1000;   // kept for OLED progress bar
 
-// Strategy-aware alarm escalation — no cross-mode escalation, strategies are fixed at fire time
+// Strategy-aware alarm escalation - no cross-mode escalation, strategies are fixed at fire time
 void tickAlarmEscalation() {
+  // Phase only advances when user snoozes - no timer-based escalation
   switch (currentStrategy) {
+
     case STRAT_GENTLE:
-      escMode = 1;
-      tickNokiaRingtone();
+      // Phase 1: Nokia ringtone on passive buzzer
+      // Phase 2: Phone call (fires once)
+      // Phase 3: Tapo bulb strobe at 50% brightness
+      if (alarmPhase == 1) {
+        escMode = 1;
+        tickNokiaRingtone();
+      } else if (alarmPhase == 2) {
+        escMode = 3;
+        if (!nuclearCallMade) { nuclearCallMade = true; pendingTwilioCall = true; }
+      } else {
+        escMode = 2;
+        strobeBrightness = 50;
+        tickStrobe();
+      }
       break;
 
     case STRAT_NORMAL:
-      escMode = 2;
-      digitalWrite(ACTIVE_BUZZER, HIGH);
-      strobeBrightness = 50;
-      tickStrobe();
+      // Phase 1: Phone call (fires once)
+      // Phase 2: Tapo strobe at 75%
+      // Phase 3: Active buzzer + strobe
+      if (alarmPhase == 1) {
+        escMode = 3;
+        if (!nuclearCallMade) { nuclearCallMade = true; pendingTwilioCall = true; }
+      } else if (alarmPhase == 2) {
+        escMode = 2;
+        strobeBrightness = 75;
+        tickStrobe();
+      } else {
+        escMode = 2;
+        digitalWrite(ACTIVE_BUZZER, HIGH);
+        strobeBrightness = 75;
+        tickStrobe();
+      }
       break;
 
     case STRAT_NUCLEAR:
-      escMode = 2;
-      digitalWrite(ACTIVE_BUZZER, HIGH);
-      strobeBrightness = 100;
-      tickStrobe();
-      if (!nuclearCallMade) {
-        nuclearCallMade = true;
-        makeWakeUpCall();
-        Serial.println("Nuclear: calling via Twilio");
+      // Phase 1: Active buzzer
+      // Phase 2: Active buzzer + Nokia ringtone simultaneously
+      // Phase 3: Active buzzer + 100% strobe + phone call (once)
+      if (alarmPhase == 1) {
+        escMode = 2;
+        digitalWrite(ACTIVE_BUZZER, HIGH);
+      } else if (alarmPhase == 2) {
+        escMode = 2;
+        digitalWrite(ACTIVE_BUZZER, HIGH);
+        tickNokiaRingtone();
+      } else {
+        escMode = 2;
+        digitalWrite(ACTIVE_BUZZER, HIGH);
+        strobeBrightness = 100;
+        tickStrobe();
+        if (!nuclearCallMade) { nuclearCallMade = true; pendingTwilioCall = true; }
       }
       break;
   }
@@ -480,10 +542,25 @@ void doSnooze() {
   snoozeCount++;
   alarmMinute += 1;
   if (alarmMinute >= 60) { alarmMinute -= 60; alarmHour = (alarmHour + 1) % 24; }
+
+  // Advance phase on snooze - this is how escalation works
+  if (alarmPhase < 3) {
+    alarmPhase++;
+  } else if (!escalatedToNuclear && currentStrategy != STRAT_NUCLEAR) {
+    // All 3 phases exhausted without dismissal - override to NUCLEAR
+    escalatedToNuclear = true;
+    currentStrategy    = STRAT_NUCLEAR;
+    alarmPhase         = 1;
+    Serial.println("[SNOOZE] Escalated to NUCLEAR");
+  }
+  // If already NUCLEAR phase 3, stay there - keep escalating
+
+  nuclearCallMade = false; // allow next phase's call to fire
+  phaseStartMs    = millis();
+
   state        = SNOOZED;
   snoozeShowMs = millis();
-  // sunriseFiredThisAlarm intentionally NOT reset here — snooze re-ring
-  // should not replay sunrise
+  // sunriseFiredThisAlarm intentionally NOT reset - snooze re-ring must not replay sunrise
 }
 
 // ---------------------------------------------------------------------------
@@ -740,16 +817,21 @@ void handleButtons() {
       if (snz) {
         doSnooze();
       } else if (cnf) {
+        // Send wake report BEFORE resetting
+        sendWakeReport();
         stopAllOutputs();
-        alarmActive          = false;
-        snoozeCount          = 0;
-        demoModalityActive   = false;
-        demoSunriseDone      = false;
-        sunriseFiredThisAlarm = false;
-        nuclearCallMade      = false;
-        naturalAlarmPendingAfterSunrise = false;  // add this
-        sunriseActive        = false;
-        state                = HOME;
+        alarmActive                     = false;
+        snoozeCount                     = 0;
+        demoModalityActive              = false;
+        demoSunriseDone                 = false;
+        sunriseFiredThisAlarm           = false;
+        nuclearCallMade                 = false;
+        naturalAlarmPendingAfterSunrise = false;
+        sunriseActive                   = false;
+        alarmPhase                      = 1;
+        phaseStartMs                    = millis();
+        escalatedToNuclear              = false;
+        state                           = HOME;
       }
       break;
 
@@ -759,19 +841,24 @@ void handleButtons() {
 }
 
 // ---------------------------------------------------------------------------
+// Wake report sender — call once when user finally dismisses alarm
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // HTTP handlers
 // ---------------------------------------------------------------------------
 void handleStatus() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  char json[220];
+  char json[256];
   snprintf(json, sizeof(json),
-    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d,\"sunrise_active\":%s,\"strategy\":%d,\"demo_active\":%s}",
+    "{\"hour\":%d,\"minute\":%d,\"alarm_active\":%s,\"esc_mode\":%d,\"snooze_count\":%d,\"sunrise_active\":%s,\"strategy\":%d,\"demo_active\":%s,\"alarm_phase\":%d}",
     alarmHour, alarmMinute,
     (state == ALARM_RINGING) ? "true" : "false",
     escMode, snoozeCount,
     sunriseActive ? "true" : "false",
     (int)currentStrategy,
-    demoModalityActive ? "true" : "false");
+    demoModalityActive ? "true" : "false",
+    alarmPhase);
   server.send(200, "application/json", json);
 }
 
@@ -787,16 +874,25 @@ void handleSet() {
 
 void handleDismiss() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
+
+  // Send wake report BEFORE resetting - snoozeCount and escalatedToNuclear must still be valid
+  if (state == ALARM_RINGING || snoozeCount > 0) {
+    sendWakeReport();
+  }
+
   stopAllOutputs();
-  alarmActive          = false;
-  snoozeCount          = 0;
-  demoModalityActive   = false;
-  demoSunriseDone      = false;
-  sunriseFiredThisAlarm = false;
-  nuclearCallMade      = false;
+  alarmActive                     = false;
+  snoozeCount                     = 0;
+  demoModalityActive              = false;
+  demoSunriseDone                 = false;
+  sunriseFiredThisAlarm           = false;
+  nuclearCallMade                 = false;
   naturalAlarmPendingAfterSunrise = false;
-  sunriseActive        = false;
-  state                = HOME;
+  sunriseActive                   = false;
+  alarmPhase                      = 1;
+  phaseStartMs                    = millis();
+  escalatedToNuclear              = false;
+  state                           = HOME;
   server.send(200, "text/plain", "OK");
 }
 
@@ -826,12 +922,21 @@ void handleEscalate() {
   if (mode < 1 || mode > 3) {
     server.send(400, "text/plain", "Mode must be 1-3"); return;
   }
-  stopAllBuzzers();
-  escMode      = mode;
-  alarmStartMs = millis() - (mode == 2 ? ESC_2_MS : mode == 3 ? ESC_3_MS : 0);
-  alarmActive  = true;
-  state        = ALARM_RINGING;
-  if (mode == 3) makeWakeUpCall();
+
+  stopAllOutputs();
+
+  if (mode == 1) {
+    // Passive buzzer — Nokia ringtone
+    ledcAttachPin(PASSIVE_BUZZER, LEDC_CH);
+    startTone(1000);
+  } else if (mode == 2) {
+    // Active buzzer only
+    digitalWrite(ACTIVE_BUZZER, HIGH);
+  } else if (mode == 3) {
+    // Phone call
+    makeWakeUpCall();
+  }
+
   server.send(200, "text/plain", "OK");
 }
 
@@ -906,23 +1011,20 @@ void setup() {
   display.print("Connecting to WiFi...");
   display.display();
 
-  WiFiManager wm;
-  wm.setConfigPortalTimeout(180);
+  WiFi.begin("utexas-iot", "56735754194554061566");
 
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("WiFi setup:");
-  display.println("Connect to AP:");
-  display.setTextSize(2);
-  display.setCursor(0, 24);
-  display.println("RiseIQ");
-  display.setTextSize(1);
-  display.setCursor(0, 48);
-  display.println("-> 192.168.4.1");
-  display.display();
+display.clearDisplay();
+display.setCursor(0, 20);
+display.print("Connecting...");
+display.display();
 
-  if (!wm.autoConnect("RiseIQ")) {
+int retries = 0;
+while (WiFi.status() != WL_CONNECTED && retries < 40) {
+  delay(500);
+  retries++;
+}
+
+if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi failed");
     display.clearDisplay();
     display.setCursor(0, 28);
@@ -951,7 +1053,7 @@ void setup() {
     server.begin();
 
     //pinMode(TAPO_BTN, INPUT_PULLUP);
-    bulbReady = bulb.begin("10.159.67.114", "akul.laddha@gmail.com", "water1234");
+    bulbReady = bulb.begin("10.159.67.43", "akul.laddha@gmail.com", "water1234");
     Serial.println(bulbReady ? "Bulb connected" : "Bulb failed");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
@@ -973,6 +1075,11 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  if (pendingTwilioCall) {
+    pendingTwilioCall = false;
+    makeWakeUpCall();
+  }
+
   // ---- Update current time --------------------------------------------------
   struct tm t;
   if (getLocalTime(&t)) {
@@ -986,11 +1093,22 @@ void loop() {
 
   // ---- When demo sunrise finishes, start the alarm sequence ----------------
   if (demoModalityActive && !sunriseActive && !demoSunriseDone) {
-    demoSunriseDone  = true;
-    currentStrategy  = demoModalityStrategy;
-    alarmStartMs     = millis();
-    state            = ALARM_RINGING;
-    alarmActive      = true;
+    demoSunriseDone    = true;
+    currentStrategy    = demoModalityStrategy;
+    alarmFireMs        = millis();
+    alarmStartMs       = alarmFireMs;
+    alarmPhase         = 1;
+    phaseStartMs       = millis();
+    escalatedToNuclear = false;
+    nuclearCallMade    = false;
+    escMode            = 1;
+    beepOn             = false;
+    beepToggleMs       = 0;
+    strobeOn           = false;
+    strobeToggleMs     = 0;
+    strobeBrightness   = (currentStrategy == STRAT_NUCLEAR) ? 100 : 50;
+    state              = ALARM_RINGING;
+    alarmActive        = true;
   }
 
   // ---- Read buttons ---------------------------------------------------------
@@ -1032,7 +1150,11 @@ if (naturalAlarmPendingAfterSunrise && !sunriseActive && state == HOME) {
   rpi.send_ready();
   Strategy uartStrategy = rpi.recv_strategy();
   currentStrategy = uartStrategy;
-  alarmStartMs     = millis();
+  alarmFireMs      = millis();
+  alarmStartMs     = alarmFireMs;
+  alarmPhase         = 1;
+  phaseStartMs       = millis();
+  escalatedToNuclear = false;
   escMode          = 1;
   beepOn           = false;
   beepToggleMs     = 0;
@@ -1044,12 +1166,25 @@ if (naturalAlarmPendingAfterSunrise && !sunriseActive && state == HOME) {
   state            = ALARM_RINGING;
 }
 
+  if (state == HOME && timeValid && snoozeCount > 0 &&
+      curHour == alarmHour && curMinute == alarmMinute && curSecond <= 4) {
+    alarmFireMs      = millis();
+    alarmStartMs     = alarmFireMs;
+    phaseStartMs     = millis();
+    nuclearCallMade  = false;
+    escMode          = 1;
+    beepOn           = false;
+    beepToggleMs     = 0;
+    alarmActive      = true;
+    strobeOn         = false;
+    strobeToggleMs   = 0;
+    strobeBrightness = (currentStrategy == STRAT_NUCLEAR) ? 100 : 50;
+    state            = ALARM_RINGING;
+  }
+
   // ---- Alarm escalation tick ------------------------------------------------
   if (state == ALARM_RINGING) {
     tickAlarmEscalation();
-    if (currentStrategy == STRAT_NORMAL || currentStrategy == STRAT_NUCLEAR) {
-      tickStrobe();
-    }
   }
 
   // ---- Demo buzzer tick (legacy OLED demo) ----------------------------------
